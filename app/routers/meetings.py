@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.meeting import MeetingCreate, MeetingInDB # Import Meeting models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -44,28 +44,30 @@ async def read_meetings(
 
 @router.get("/{meeting_id}", response_model=MeetingInDB)
 async def read_meeting(
-    meeting_id: ObjectId = Depends(get_object_id),
+    meeting_id: str = Path(..., description="The BSON ObjectId of the meeting as a string"),
     collection = Depends(get_meeting_collection)
 ):
     """Retrieves a specific meeting by ID."""
-    meeting = await collection.find_one({"_id": meeting_id})
+    validated_meeting_oid = validate_object_id_sync(meeting_id)
+    meeting = await collection.find_one({"_id": validated_meeting_oid})
     if meeting:
         return MeetingInDB(**meeting)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Meeting with id {meeting_id} not found")
 
 @router.put("/{meeting_id}", response_model=MeetingInDB)
 async def update_meeting(
-    meeting_update: MeetingCreate, # Consider a MeetingUpdate model
-    meeting_id: ObjectId = Depends(get_object_id),
+    meeting_update: MeetingCreate,
+    meeting_id: str = Path(..., description="The BSON ObjectId of the meeting as a string"),
     collection = Depends(get_meeting_collection)
 ):
     """Updates an existing meeting."""
+    validated_meeting_oid = validate_object_id_sync(meeting_id)
     meeting_dict = meeting_update.model_dump(mode="json", exclude_unset=True)
     if not meeting_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_meeting = await collection.find_one_and_update(
-        {"_id": meeting_id},
+        {"_id": validated_meeting_oid},
         {"$set": meeting_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -75,11 +77,12 @@ async def update_meeting(
 
 @router.delete("/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_meeting(
-    meeting_id: ObjectId = Depends(get_object_id),
+    meeting_id: str = Path(..., description="The BSON ObjectId of the meeting as a string"),
     collection = Depends(get_meeting_collection)
 ):
     """Deletes a meeting."""
-    delete_result = await collection.delete_one({"_id": meeting_id})
+    validated_meeting_oid = validate_object_id_sync(meeting_id)
+    delete_result = await collection.delete_one({"_id": validated_meeting_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Meeting with id {meeting_id} not found for deletion")
     return

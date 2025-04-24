@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.session import SessionCreate, SessionInDB # Import Session models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -43,28 +43,30 @@ async def read_sessions(
 
 @router.get("/{session_id}", response_model=SessionInDB)
 async def read_session(
-    session_id: ObjectId = Depends(get_object_id),
+    session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),
     collection = Depends(get_session_collection)
 ):
     """Retrieves a specific session by ID."""
-    session = await collection.find_one({"_id": session_id})
+    validated_session_oid = validate_object_id_sync(session_id)
+    session = await collection.find_one({"_id": validated_session_oid})
     if session:
         return SessionInDB(**session)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session with id {session_id} not found")
 
 @router.put("/{session_id}", response_model=SessionInDB)
 async def update_session(
-    session_update: SessionCreate, # Consider a SessionUpdate model
-    session_id: ObjectId = Depends(get_object_id),
+    session_update: SessionCreate,
+    session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),
     collection = Depends(get_session_collection)
 ):
     """Updates an existing session."""
+    validated_session_oid = validate_object_id_sync(session_id)
     session_dict = session_update.model_dump(exclude_unset=True)
     if not session_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_session = await collection.find_one_and_update(
-        {"_id": session_id},
+        {"_id": validated_session_oid},
         {"$set": session_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -74,11 +76,12 @@ async def update_session(
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
-    session_id: ObjectId = Depends(get_object_id),
+    session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),
     collection = Depends(get_session_collection)
 ):
     """Deletes a session."""
-    delete_result = await collection.delete_one({"_id": session_id})
+    validated_session_oid = validate_object_id_sync(session_id)
+    delete_result = await collection.delete_one({"_id": validated_session_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session with id {session_id} not found for deletion")
     return

@@ -4,6 +4,7 @@ from .base import PyObjectId, common_config
 
 class JiraTaskBase(BaseModel):
     session_id: PyObjectId # Link to the Session
+    uid: PyObjectId # Reference to the User (_id) who created it
     status: str
     description: Optional[str] = None
     url: Optional[HttpUrl] = None # Validate as URL

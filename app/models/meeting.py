@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, EmailStr
 from typing import Optional
 from datetime import datetime
 from .base import PyObjectId, common_config
@@ -7,6 +7,7 @@ class MeetingBase(BaseModel):
     session_id: PyObjectId
     uid: PyObjectId # Often the host or creator
     pid: PyObjectId
+    email: EmailStr
     meeting_url: HttpUrl
     meeting_ID: str
     passcode: Optional[str] = None

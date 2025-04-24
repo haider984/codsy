@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.transcript import TranscriptCreate, TranscriptInDB # Import Transcript models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -51,28 +51,30 @@ async def read_transcripts(
 
 @router.get("/{transcript_id}", response_model=TranscriptInDB)
 async def read_transcript(
-    transcript_id: ObjectId = Depends(get_object_id),
+    transcript_id: str = Path(..., description="The BSON ObjectId of the transcript as a string"),
     collection = Depends(get_transcript_collection)
 ):
     """Retrieves a specific transcript by ID."""
-    transcript = await collection.find_one({"_id": transcript_id})
+    validated_transcript_oid = validate_object_id_sync(transcript_id)
+    transcript = await collection.find_one({"_id": validated_transcript_oid})
     if transcript:
         return TranscriptInDB(**transcript)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Transcript with id {transcript_id} not found")
 
 @router.put("/{transcript_id}", response_model=TranscriptInDB)
 async def update_transcript(
-    transcript_update: TranscriptCreate, # Consider a TranscriptUpdate model
-    transcript_id: ObjectId = Depends(get_object_id),
+    transcript_update: TranscriptCreate,
+    transcript_id: str = Path(..., description="The BSON ObjectId of the transcript as a string"),
     collection = Depends(get_transcript_collection)
 ):
     """Updates an existing transcript."""
+    validated_transcript_oid = validate_object_id_sync(transcript_id)
     transcript_dict = transcript_update.model_dump(exclude_unset=True)
     if not transcript_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_transcript = await collection.find_one_and_update(
-        {"_id": transcript_id},
+        {"_id": validated_transcript_oid},
         {"$set": transcript_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -82,11 +84,12 @@ async def update_transcript(
 
 @router.delete("/{transcript_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_transcript(
-    transcript_id: ObjectId = Depends(get_object_id),
+    transcript_id: str = Path(..., description="The BSON ObjectId of the transcript as a string"),
     collection = Depends(get_transcript_collection)
 ):
     """Deletes a transcript."""
-    delete_result = await collection.delete_one({"_id": transcript_id})
+    validated_transcript_oid = validate_object_id_sync(transcript_id)
+    delete_result = await collection.delete_one({"_id": validated_transcript_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Transcript with id {transcript_id} not found for deletion")
     return

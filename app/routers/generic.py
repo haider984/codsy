@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.generic import GenericCreate, GenericInDB, Message # Import Generic models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id
 
 router = APIRouter()
 
@@ -34,7 +34,7 @@ async def create_generic_entry(
 @router.post("/{generic_id}/messages", response_model=GenericInDB)
 async def add_message_to_generic(
     message: Message,
-    generic_id: ObjectId = Depends(get_object_id),
+    generic_id: ObjectId = Depends(validate_object_id),
     collection = Depends(get_generic_collection)
 ):
     """Adds a message to the messages list of a specific generic entry."""
@@ -62,7 +62,7 @@ async def read_generic_entries(
 
 @router.get("/{generic_id}", response_model=GenericInDB)
 async def read_generic_entry(
-    generic_id: ObjectId = Depends(get_object_id),
+    generic_id: ObjectId = Depends(validate_object_id),
     collection = Depends(get_generic_collection)
 ):
     """Retrieves a specific generic entry by ID."""
@@ -75,7 +75,7 @@ async def read_generic_entry(
 @router.put("/{generic_id}", response_model=GenericInDB)
 async def update_generic_entry(
     generic_update: GenericCreate, # Or a GenericUpdate model
-    generic_id: ObjectId = Depends(get_object_id),
+    generic_id: ObjectId = Depends(validate_object_id),
     collection = Depends(get_generic_collection)
 ):
     """Updates an existing generic entry (potentially overwriting messages)."""
@@ -94,7 +94,7 @@ async def update_generic_entry(
 
 @router.delete("/{generic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_generic_entry(
-    generic_id: ObjectId = Depends(get_object_id),
+    generic_id: ObjectId = Depends(validate_object_id),
     collection = Depends(get_generic_collection)
 ):
     """Deletes a generic entry."""

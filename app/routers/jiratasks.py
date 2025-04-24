@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.jiratask import JiraTaskCreate, JiraTaskInDB # Import JiraTask models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -43,28 +43,30 @@ async def read_jiratasks(
 
 @router.get("/{jiratask_id}", response_model=JiraTaskInDB)
 async def read_jiratask(
-    jiratask_id: ObjectId = Depends(get_object_id), # Maps to jtid (_id)
+    jiratask_id: str = Path(..., description="The BSON ObjectId of the Jira task as a string"),
     collection = Depends(get_jiratask_collection)
 ):
     """Retrieves a specific jira task by ID."""
-    jiratask = await collection.find_one({"_id": jiratask_id})
+    validated_jiratask_oid = validate_object_id_sync(jiratask_id)
+    jiratask = await collection.find_one({"_id": validated_jiratask_oid})
     if jiratask:
         return JiraTaskInDB(**jiratask)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Jira task with id {jiratask_id} not found")
 
 @router.put("/{jiratask_id}", response_model=JiraTaskInDB)
 async def update_jiratask(
-    jiratask_update: JiraTaskCreate, # Consider a JiraTaskUpdate model
-    jiratask_id: ObjectId = Depends(get_object_id),
+    jiratask_update: JiraTaskCreate,
+    jiratask_id: str = Path(..., description="The BSON ObjectId of the Jira task as a string"),
     collection = Depends(get_jiratask_collection)
 ):
     """Updates an existing jira task."""
+    validated_jiratask_oid = validate_object_id_sync(jiratask_id)
     jiratask_dict = jiratask_update.model_dump(mode="json", exclude_unset=True)
     if not jiratask_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_jiratask = await collection.find_one_and_update(
-        {"_id": jiratask_id},
+        {"_id": validated_jiratask_oid},
         {"$set": jiratask_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -74,11 +76,12 @@ async def update_jiratask(
 
 @router.delete("/{jiratask_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_jiratask(
-    jiratask_id: ObjectId = Depends(get_object_id),
+    jiratask_id: str = Path(..., description="The BSON ObjectId of the Jira task as a string"),
     collection = Depends(get_jiratask_collection)
 ):
     """Deletes a jira task."""
-    delete_result = await collection.delete_one({"_id": jiratask_id})
+    validated_jiratask_oid = validate_object_id_sync(jiratask_id)
+    delete_result = await collection.delete_one({"_id": validated_jiratask_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Jira task with id {jiratask_id} not found for deletion")
     return

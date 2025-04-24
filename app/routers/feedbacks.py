@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.feedback import FeedbackCreate, FeedbackInDB # Import Feedback models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -51,28 +51,30 @@ async def read_feedbacks(
 
 @router.get("/{feedback_id}", response_model=FeedbackInDB)
 async def read_feedback(
-    feedback_id: ObjectId = Depends(get_object_id),
+    feedback_id: str = Path(..., description="The BSON ObjectId of the feedback as a string"),
     collection = Depends(get_feedback_collection)
 ):
     """Retrieves specific feedback by its ID."""
-    feedback = await collection.find_one({"_id": feedback_id})
+    validated_feedback_oid = validate_object_id_sync(feedback_id)
+    feedback = await collection.find_one({"_id": validated_feedback_oid})
     if feedback:
         return FeedbackInDB(**feedback)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Feedback with id {feedback_id} not found")
 
 @router.put("/{feedback_id}", response_model=FeedbackInDB)
 async def update_feedback(
-    feedback_update: FeedbackCreate, # Consider a FeedbackUpdate model
-    feedback_id: ObjectId = Depends(get_object_id),
+    feedback_update: FeedbackCreate,
+    feedback_id: str = Path(..., description="The BSON ObjectId of the feedback as a string"),
     collection = Depends(get_feedback_collection)
 ):
     """Updates existing feedback."""
+    validated_feedback_oid = validate_object_id_sync(feedback_id)
     feedback_dict = feedback_update.model_dump(exclude_unset=True)
     if not feedback_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_feedback = await collection.find_one_and_update(
-        {"_id": feedback_id},
+        {"_id": validated_feedback_oid},
         {"$set": feedback_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -82,11 +84,12 @@ async def update_feedback(
 
 @router.delete("/{feedback_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_feedback(
-    feedback_id: ObjectId = Depends(get_object_id),
+    feedback_id: str = Path(..., description="The BSON ObjectId of the feedback as a string"),
     collection = Depends(get_feedback_collection)
 ):
     """Deletes feedback."""
-    delete_result = await collection.delete_one({"_id": feedback_id})
+    validated_feedback_oid = validate_object_id_sync(feedback_id)
+    delete_result = await collection.delete_one({"_id": validated_feedback_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Feedback with id {feedback_id} not found for deletion")
     return

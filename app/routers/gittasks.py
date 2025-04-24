@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.gittask import GitTaskCreate, GitTaskInDB # Import GitTask models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -43,28 +43,30 @@ async def read_gittasks(
 
 @router.get("/{gittask_id}", response_model=GitTaskInDB)
 async def read_gittask(
-    gittask_id: ObjectId = Depends(get_object_id), # Maps to gtid (_id)
+    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
     collection = Depends(get_gittask_collection)
 ):
     """Retrieves a specific git task by ID."""
-    gittask = await collection.find_one({"_id": gittask_id})
+    validated_gittask_oid = validate_object_id_sync(gittask_id)
+    gittask = await collection.find_one({"_id": validated_gittask_oid})
     if gittask:
         return GitTaskInDB(**gittask)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Git task with id {gittask_id} not found")
 
 @router.put("/{gittask_id}", response_model=GitTaskInDB)
 async def update_gittask(
-    gittask_update: GitTaskCreate, # Consider a GitTaskUpdate model
-    gittask_id: ObjectId = Depends(get_object_id),
+    gittask_update: GitTaskCreate,
+    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
     collection = Depends(get_gittask_collection)
 ):
     """Updates an existing git task."""
+    validated_gittask_oid = validate_object_id_sync(gittask_id)
     gittask_dict = gittask_update.model_dump(mode="json", exclude_unset=True)
     if not gittask_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_gittask = await collection.find_one_and_update(
-        {"_id": gittask_id},
+        {"_id": validated_gittask_oid},
         {"$set": gittask_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -74,11 +76,12 @@ async def update_gittask(
 
 @router.delete("/{gittask_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_gittask(
-    gittask_id: ObjectId = Depends(get_object_id),
+    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
     collection = Depends(get_gittask_collection)
 ):
     """Deletes a git task."""
-    delete_result = await collection.delete_one({"_id": gittask_id})
+    validated_gittask_oid = validate_object_id_sync(gittask_id)
+    delete_result = await collection.delete_one({"_id": validated_gittask_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Git task with id {gittask_id} not found for deletion")
     return

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -6,7 +6,7 @@ from pymongo import ReturnDocument
 from ..models.users import UserCreate, UserInDB#, UserUpdate # Import UserUpdate if you create it
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from ..utils.dependencies import get_object_id # Assuming a helper for ID conversion
+from ..utils.dependencies import validate_object_id_sync
 
 router = APIRouter()
 
@@ -44,30 +44,31 @@ async def read_users(
 
 @router.get("/{user_id}", response_model=UserInDB)
 async def read_user(
-    user_id: ObjectId = Depends(get_object_id), # Path param with Depends (default)
-    collection = Depends(get_user_collection) # Dependency (default)
+    user_id: str = Path(..., description="The BSON ObjectId of the user as a string"),
+    collection = Depends(get_user_collection)
 ):
     """Retrieves a specific user by ID."""
-    user = await collection.find_one({"_id": user_id})
+    validated_user_oid = validate_object_id_sync(user_id)
+    user = await collection.find_one({"_id": validated_user_oid})
     if user:
         return UserInDB(**user)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id {user_id} not found")
 
 @router.put("/{user_id}", response_model=UserInDB)
 async def update_user(
-    user_update: UserCreate, # Body parameter (Moved first)
-    user_id: ObjectId = Depends(get_object_id), # Path param with Depends
-    collection = Depends(get_user_collection) # Dependency
+    user_update: UserCreate,
+    user_id: str = Path(..., description="The BSON ObjectId of the user as a string"),
+    collection = Depends(get_user_collection)
 ):
     """Updates an existing user."""
-    # It's often better practice to have a separate UserUpdate model
-    # that makes all fields Optional, so users don't have to send all fields.
-    user_dict = user_update.model_dump(exclude_unset=True) # Only update provided fields
+    validated_user_oid = validate_object_id_sync(user_id)
+
+    user_dict = user_update.model_dump(exclude_unset=True)
     if not user_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
     updated_user = await collection.find_one_and_update(
-        {"_id": user_id},
+        {"_id": validated_user_oid},
         {"$set": user_dict},
         return_document=ReturnDocument.AFTER
     )
@@ -77,11 +78,12 @@ async def update_user(
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
-    user_id: ObjectId = Depends(get_object_id), # Path param with Depends
-    collection = Depends(get_user_collection) # Dependency
+    user_id: str = Path(..., description="The BSON ObjectId of the user as a string"),
+    collection = Depends(get_user_collection)
 ):
     """Deletes a user."""
-    delete_result = await collection.delete_one({"_id": user_id})
+    validated_user_oid = validate_object_id_sync(user_id)
+    delete_result = await collection.delete_one({"_id": validated_user_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User with id {user_id} not found for deletion")
-    return # Return None with 204 status
+    return
