@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  web:
+    build: .  # Build the image from the Dockerfile in the current directory
+    ports:
+      - "8000:8000" # Map host port 8000 to container port 8000
+    volumes:
+      - ./app:/app/app # Mount your app directory for live code reloading (development)
+    env_file:
+      - .env         # Load environment variables from the .env file
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # Override CMD for development reload
+    # depends_on: # Add if you were running MongoDB in another Docker container
+    #   - db
