@@ -28,7 +28,7 @@ async def connect_to_mongo():
         parsed_uri = urlparse(connection_string)
         db_name = parsed_uri.path.lstrip('/')
         if not db_name:
-            db_name = "mydatabase"
+            db_name = "codsy"
             print(f"No database name found in MONGODB_URL path, using default: {db_name}")
 
         db.db = db.client[db_name]
