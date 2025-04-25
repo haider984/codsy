@@ -7,8 +7,8 @@ from .core.config import settings # Import settings
 
 # Import ALL your router modules
 from .routers import (
-    users, projects, sessions, gittasks,
-    jiratasks, feedbacks, meetings, generic, transcripts
+    projects, sessions, gittasks,
+    jiratasks, feedbacks, meetings, generic, transcripts, agents
 )
 
 @asynccontextmanager
@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.PROJECT_NAME, version="0.1.0", lifespan=lifespan)
 
 # Include ALL routers
-app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+# app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(gittasks.router, prefix="/api/v1/gittasks", tags=["Git Tasks"])
@@ -38,6 +38,7 @@ app.include_router(feedbacks.router, prefix="/api/v1/feedbacks", tags=["Feedback
 app.include_router(meetings.router, prefix="/api/v1/meetings", tags=["Meetings"])
 app.include_router(generic.router, prefix="/api/v1/generic", tags=["Generic"])
 app.include_router(transcripts.router, prefix="/api/v1/transcripts", tags=["Transcripts"])
+app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 
 @app.get("/")
 async def root():

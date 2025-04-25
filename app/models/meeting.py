@@ -7,7 +7,7 @@ class MeetingBase(BaseModel):
     session_id: PyObjectId
     uid: PyObjectId # Often the host or creator
     pid: PyObjectId
-    email: EmailStr
+    email: Optional[EmailStr] = None
     meeting_url: HttpUrl
     meeting_ID: str
     passcode: Optional[str] = None
@@ -15,7 +15,7 @@ class MeetingBase(BaseModel):
     end_time: Optional[datetime] = None
 
 class MeetingCreate(MeetingBase):
-    pass
+    email: EmailStr
 
 class MeetingInDB(MeetingBase):
     # Assuming meetings have their own ID, though session_id is primary link

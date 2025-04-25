@@ -32,21 +32,11 @@ async def create_transcript(
 
 @router.get("/", response_model=List[TranscriptInDB])
 async def read_transcripts(
-    session_id: str | None = None, # Allow filtering by session_id
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_transcript_collection)
 ):
-    """Retrieves a list of transcripts with pagination, optionally filtered by session_id."""
-    query = {}
-    if session_id:
-        try:
-            query["session_id"] = ObjectId(session_id)
-        except Exception:
-             raise HTTPException(status_code=400, detail=f"Invalid session_id format: {session_id}")
-
-    transcripts_cursor = collection.find(query).skip(skip).limit(limit)
-    transcripts = await transcripts_cursor.to_list(length=limit)
+    """Retrieves ALL transcripts."""
+    transcripts_cursor = collection.find()
+    transcripts = await transcripts_cursor.to_list(length=None)
     return [TranscriptInDB(**tr) for tr in transcripts]
 
 @router.get("/{transcript_id}", response_model=TranscriptInDB)

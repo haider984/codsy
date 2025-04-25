@@ -32,18 +32,12 @@ async def create_feedback(
 
 @router.get("/", response_model=List[FeedbackInDB])
 async def read_feedbacks(
-    session_id: str | None = None, # Allow filtering by session_id
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_feedback_collection)
 ):
-    """Retrieves a list of feedbacks with pagination, optionally filtered by session_id."""
-    query = {}
-    if session_id:
-        try:
-            query["session_id"] = ObjectId(session_id)
-        except Exception:
-             raise HTTPException(status_code=400, detail=f"Invalid session_id format: {session_id}")
+    """Retrieves a list of all feedbacks with pagination."""
+    query = {} # Always fetch all documents (subject to pagination)
 
     feedbacks_cursor = collection.find(query).skip(skip).limit(limit)
     feedbacks = await feedbacks_cursor.to_list(length=limit)

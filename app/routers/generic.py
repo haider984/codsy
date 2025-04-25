@@ -30,24 +30,6 @@ async def create_generic_entry(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating generic entry: {e}")
 
-# Endpoint to add a message to an existing generic entry (log)
-@router.post("/{generic_id}/messages", response_model=GenericInDB)
-async def add_message_to_generic(
-    message: Message,
-    generic_id: ObjectId = Depends(validate_object_id),
-    collection = Depends(get_generic_collection)
-):
-    """Adds a message to the messages list of a specific generic entry."""
-    message_dict = message.model_dump(mode="json")
-    updated_generic = await collection.find_one_and_update(
-        {"_id": generic_id},
-        {"$push": {"messages": message_dict}}, # Use $push to add to the array
-        return_document=ReturnDocument.AFTER
-    )
-    if updated_generic:
-        return GenericInDB(**updated_generic)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Generic entry with id {generic_id} not found")
-
 
 @router.get("/", response_model=List[GenericInDB])
 async def read_generic_entries(
@@ -62,11 +44,17 @@ async def read_generic_entries(
 
 @router.get("/{generic_id}", response_model=GenericInDB)
 async def read_generic_entry(
-    generic_id: ObjectId = Depends(validate_object_id),
+    generic_id: str,
     collection = Depends(get_generic_collection)
 ):
     """Retrieves a specific generic entry by ID."""
-    generic = await collection.find_one({"_id": generic_id})
+    print(f"Received generic_id: {generic_id}")
+    try:
+        object_id = ObjectId(generic_id)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Temp Check - Invalid ObjectId format: {generic_id}, Error: {e}")
+
+    generic = await collection.find_one({"_id": object_id})
     if generic:
         return GenericInDB(**generic)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Generic entry with id {generic_id} not found")
