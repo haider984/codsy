@@ -32,3 +32,8 @@ class MessageCreate(MessageBase):
 class MessageInDB(MessageBase):
     mid: PyObjectId = Field(alias="_id") # Primary key
     model_config = common_config
+
+# New response model for returning only the MID
+class MessageMidResponse(BaseModel):
+    mid: PyObjectId
+    # model_config = common_config # Optional, probably not needed just for mid

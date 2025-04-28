@@ -3,7 +3,7 @@ from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from ..models.message import MessageCreate, MessageInDB # Import Message models
+from ..models.message import MessageCreate, MessageInDB, MessageMidResponse # Import Message models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
@@ -14,19 +14,18 @@ async def get_message_collection(db: AsyncIOMotorDatabase = Depends(get_database
     """Dependency to get the 'messages' collection."""
     return db.get_collection("messages")
 
-@router.post("/", response_model=MessageInDB, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
+@router.post("/", response_model=MessageMidResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_message(
     message: MessageCreate,
     collection = Depends(get_message_collection)
 ):
-    """Creates a new message."""
+    """Creates a new message and returns only its mid."""
     try:
         message_dict = message.model_dump()
         insert_result = await collection.insert_one(message_dict)
-        created_message = await collection.find_one({"_id": insert_result.inserted_id})
-        if created_message:
-            return MessageInDB(**created_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Message could not be created")
+        if insert_result.inserted_id:
+            return MessageMidResponse(mid=insert_result.inserted_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Message could not be created or ID not retrieved")
     except Exception as e:
         # Consider more specific error handling based on validation etc.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating message: {e}")
