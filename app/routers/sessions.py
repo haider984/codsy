@@ -53,27 +53,6 @@ async def read_session(
         return SessionInDB(**session)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session with id {session_id} not found")
 
-@router.put("/{session_id}", response_model=SessionInDB, response_model_by_alias=False)
-async def update_session(
-    session_update: SessionCreate,
-    session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),
-    collection = Depends(get_session_collection)
-):
-    """Updates an existing session."""
-    validated_session_oid = validate_object_id_sync(session_id)
-    session_dict = session_update.model_dump(exclude_unset=True)
-    if not session_dict:
-         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
-
-    updated_session = await collection.find_one_and_update(
-        {"_id": validated_session_oid},
-        {"$set": session_dict},
-        return_document=ReturnDocument.AFTER
-    )
-    if updated_session:
-        return SessionInDB(**updated_session)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session with id {session_id} not found for update")
-
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),

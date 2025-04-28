@@ -16,5 +16,5 @@ class MeetingCreate(MeetingBase):
 
 class MeetingInDB(MeetingBase):
     meeting_id: PyObjectId = Field(alias="_id")
-    mid: PyObjectId
+    meet_id: PyObjectId
     model_config = common_config
