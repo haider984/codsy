@@ -33,3 +33,10 @@ class UserCreate(UserBase):
 class UserInDB(UserBase):
     uid: PyObjectId = Field(alias="_id") # Changed id to uid, kept alias
     model_config = common_config
+
+# New response model for returning only the UID
+class UserUidResponse(BaseModel):
+    uid: PyObjectId
+    # Ensure this model also respects the common config if needed for serialization,
+    # although PyObjectId handles its own string serialization.
+    # model_config = common_config # Optional, probably not needed just for uid

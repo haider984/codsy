@@ -3,7 +3,7 @@ from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from ..models.users import UserCreate, UserInDB
+from ..models.users import UserCreate, UserInDB, UserUidResponse
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
@@ -14,19 +14,18 @@ async def get_user_collection(db: AsyncIOMotorDatabase = Depends(get_database)):
     """Dependency to get the 'users' collection."""
     return db.get_collection("users")
 
-@router.post("/", response_model=UserInDB, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
+@router.post("/", response_model=UserUidResponse, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_user(
     user: UserCreate,
     collection = Depends(get_user_collection)
 ):
-    """Creates a new user."""
+    """Creates a new user and returns only their uid."""
     try:
         user_dict = user.model_dump()
         insert_result = await collection.insert_one(user_dict)
-        created_user = await collection.find_one({"_id": insert_result.inserted_id})
-        if created_user:
-            return UserInDB(**created_user)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User could not be created")
+        if insert_result.inserted_id:
+            return UserUidResponse(uid=insert_result.inserted_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="User could not be created or ID not retrieved")
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating user: {e}")
 
