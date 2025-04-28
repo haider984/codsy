@@ -14,7 +14,7 @@ async def get_session_collection(db: AsyncIOMotorDatabase = Depends(get_database
     """Dependency to get the 'sessions' collection."""
     return db.get_collection("sessions")
 
-@router.post("/", response_model=SessionInDB, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=SessionInDB, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_session(
     session: SessionCreate,
     collection = Depends(get_session_collection)
@@ -30,7 +30,7 @@ async def create_session(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating session: {e}")
 
-@router.get("/", response_model=List[SessionInDB])
+@router.get("/", response_model=List[SessionInDB], response_model_by_alias=False)
 async def read_sessions(
     skip: int = 0,
     limit: int = 100,
@@ -41,7 +41,7 @@ async def read_sessions(
     sessions = await sessions_cursor.to_list(length=limit)
     return [SessionInDB(**session) for session in sessions]
 
-@router.get("/{session_id}", response_model=SessionInDB)
+@router.get("/{session_id}", response_model=SessionInDB, response_model_by_alias=False)
 async def read_session(
     session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),
     collection = Depends(get_session_collection)
@@ -53,7 +53,7 @@ async def read_session(
         return SessionInDB(**session)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session with id {session_id} not found")
 
-@router.put("/{session_id}", response_model=SessionInDB)
+@router.put("/{session_id}", response_model=SessionInDB, response_model_by_alias=False)
 async def update_session(
     session_update: SessionCreate,
     session_id: str = Path(..., description="The BSON ObjectId of the session as a string"),

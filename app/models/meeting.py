@@ -1,23 +1,20 @@
-from pydantic import BaseModel, Field, HttpUrl, EmailStr
-from typing import Optional
+from pydantic import BaseModel, Field, EmailStr
 from datetime import datetime
 from .base import PyObjectId, common_config
+from bson import ObjectId as BsonObjectId
 
 class MeetingBase(BaseModel):
-    session_id: PyObjectId
-    uid: PyObjectId # Often the host or creator
-    pid: PyObjectId
-    email: Optional[EmailStr] = None
-    meeting_url: HttpUrl
+    email: EmailStr
+    meeting_url: str
     meeting_ID: str
-    passcode: Optional[str] = None
+    passcode: str
     start_time: datetime
-    end_time: Optional[datetime] = None
+    end_time: datetime
 
 class MeetingCreate(MeetingBase):
-    email: EmailStr
+    pass
 
 class MeetingInDB(MeetingBase):
-    # Assuming meetings have their own ID, though session_id is primary link
-    id: PyObjectId = Field(alias="_id")
+    meeting_id: PyObjectId = Field(alias="_id")
+    mid: PyObjectId
     model_config = common_config

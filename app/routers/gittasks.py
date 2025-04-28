@@ -3,7 +3,7 @@ from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from ..models.gittask import GitTaskCreate, GitTaskInDB # Import GitTask models
+from ..models.gittask import GitHubTaskCreate, GitHubTaskInDB
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
@@ -11,77 +11,77 @@ from ..utils.dependencies import validate_object_id_sync
 router = APIRouter()
 
 async def get_gittask_collection(db: AsyncIOMotorDatabase = Depends(get_database)):
-    """Dependency to get the 'gittasks' collection."""
-    return db.get_collection("gittasks")
+    """Dependency to get the 'github_tasks' collection."""
+    return db.get_collection("github_tasks")
 
-@router.post("/", response_model=GitTaskInDB, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=GitHubTaskInDB, status_code=status.HTTP_201_CREATED, response_model_by_alias=False)
 async def create_gittask(
-    gittask: GitTaskCreate,
+    github_task: GitHubTaskCreate,
     collection = Depends(get_gittask_collection)
 ):
-    """Creates a new git task."""
+    """Creates a new GitHub task."""
     try:
-        gittask_dict = gittask.model_dump(mode="json") # Use mode="json" for HttpUrl etc.
-        insert_result = await collection.insert_one(gittask_dict)
-        created_gittask = await collection.find_one({"_id": insert_result.inserted_id})
-        if created_gittask:
-            return GitTaskInDB(**created_gittask)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Git task could not be created")
+        github_task_dict = github_task.model_dump()
+        insert_result = await collection.insert_one(github_task_dict)
+        created_github_task = await collection.find_one({"_id": insert_result.inserted_id})
+        if created_github_task:
+            return GitHubTaskInDB(**created_github_task)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="GitHub task could not be created")
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating git task: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating GitHub task: {e}")
 
-@router.get("/", response_model=List[GitTaskInDB])
+@router.get("/", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
 async def read_gittasks(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_gittask_collection)
 ):
-    """Retrieves a list of git tasks with pagination."""
-    gittasks_cursor = collection.find().skip(skip).limit(limit)
-    gittasks = await gittasks_cursor.to_list(length=limit)
-    return [GitTaskInDB(**gt) for gt in gittasks]
+    """Retrieves a list of GitHub tasks with pagination."""
+    github_tasks_cursor = collection.find().skip(skip).limit(limit)
+    github_tasks = await github_tasks_cursor.to_list(length=limit)
+    return [GitHubTaskInDB(**gt) for gt in github_tasks]
 
-@router.get("/{gittask_id}", response_model=GitTaskInDB)
+@router.get("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
 async def read_gittask(
-    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
+    git_task_id: str = Path(..., description="The BSON ObjectId of the GitHub task as a string"),
     collection = Depends(get_gittask_collection)
 ):
-    """Retrieves a specific git task by ID."""
-    validated_gittask_oid = validate_object_id_sync(gittask_id)
-    gittask = await collection.find_one({"_id": validated_gittask_oid})
-    if gittask:
-        return GitTaskInDB(**gittask)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Git task with id {gittask_id} not found")
+    """Retrieves a specific GitHub task by ID."""
+    validated_github_task_oid = validate_object_id_sync(git_task_id)
+    github_task = await collection.find_one({"_id": validated_github_task_oid})
+    if github_task:
+        return GitHubTaskInDB(**github_task)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub task with id {git_task_id} not found")
 
-@router.put("/{gittask_id}", response_model=GitTaskInDB)
+@router.put("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
 async def update_gittask(
-    gittask_update: GitTaskCreate,
-    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
+    github_task_update: GitHubTaskCreate,
+    git_task_id: str = Path(..., description="The BSON ObjectId of the GitHub task as a string"),
     collection = Depends(get_gittask_collection)
 ):
-    """Updates an existing git task."""
-    validated_gittask_oid = validate_object_id_sync(gittask_id)
-    gittask_dict = gittask_update.model_dump(mode="json", exclude_unset=True)
-    if not gittask_dict:
+    """Updates an existing GitHub task."""
+    validated_github_task_oid = validate_object_id_sync(git_task_id)
+    github_task_dict = github_task_update.model_dump(exclude_unset=True)
+    if not github_task_dict:
          raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
 
-    updated_gittask = await collection.find_one_and_update(
-        {"_id": validated_gittask_oid},
-        {"$set": gittask_dict},
+    updated_github_task = await collection.find_one_and_update(
+        {"_id": validated_github_task_oid},
+        {"$set": github_task_dict},
         return_document=ReturnDocument.AFTER
     )
-    if updated_gittask:
-        return GitTaskInDB(**updated_gittask)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Git task with id {gittask_id} not found for update")
+    if updated_github_task:
+        return GitHubTaskInDB(**updated_github_task)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub task with id {git_task_id} not found for update")
 
-@router.delete("/{gittask_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{git_task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_gittask(
-    gittask_id: str = Path(..., description="The BSON ObjectId of the git task as a string"),
+    git_task_id: str = Path(..., description="The BSON ObjectId of the GitHub task as a string"),
     collection = Depends(get_gittask_collection)
 ):
-    """Deletes a git task."""
-    validated_gittask_oid = validate_object_id_sync(gittask_id)
-    delete_result = await collection.delete_one({"_id": validated_gittask_oid})
+    """Deletes a GitHub task."""
+    validated_github_task_oid = validate_object_id_sync(git_task_id)
+    delete_result = await collection.delete_one({"_id": validated_github_task_oid})
     if delete_result.deleted_count == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Git task with id {gittask_id} not found for deletion")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub task with id {git_task_id} not found for deletion")
     return

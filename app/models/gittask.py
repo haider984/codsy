@@ -1,17 +1,19 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 from typing import Optional
+from datetime import datetime
 from .base import PyObjectId, common_config
 
-class GitTaskBase(BaseModel):
-    session_id: PyObjectId # Link to the Session
-    uid: Optional[PyObjectId] = None # Reference to the User (_id) who created it
-    status: str
-    description: Optional[str] = None
-    url: Optional[HttpUrl] = None # Validate as URL
+class GitHubTaskBase(BaseModel):
+    mid: PyObjectId # Foreign key to Message
+    title: str # Added field
+    description: str # Made mandatory
+    status: str # e.g., "pending", "in_progress", "completed", etc.
+    creation_date: datetime = Field(default_factory=datetime.utcnow) # Added field with default
+    completion_date: Optional[datetime] = None # Added optional field
 
-class GitTaskCreate(GitTaskBase):
+class GitHubTaskCreate(GitHubTaskBase):
     pass
 
-class GitTaskInDB(GitTaskBase):
-    id: PyObjectId = Field(alias="_id") # Maps to gtid (_id)
+class GitHubTaskInDB(GitHubTaskBase):
+    git_task_id: PyObjectId = Field(alias="_id") # Renamed from id, kept alias
     model_config = common_config
