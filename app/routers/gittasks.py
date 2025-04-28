@@ -31,7 +31,7 @@ async def create_gittask(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating GitHub task: {e}")
 
 @router.get("/", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
-async def read_gittasks(
+async def read__all_gittasks(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_gittask_collection)
@@ -42,7 +42,7 @@ async def read_gittasks(
     return [GitHubTaskInDB(**gt) for gt in github_tasks]
 
 @router.get("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
-async def read_gittask(
+async def read_gittask_by_id(
     git_task_id: str = Path(..., description="The BSON ObjectId of the GitHub task as a string"),
     collection = Depends(get_gittask_collection)
 ):

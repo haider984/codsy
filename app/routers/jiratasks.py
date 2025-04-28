@@ -31,7 +31,7 @@ async def create_jiratask(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating Jira task: {e}")
 
 @router.get("/", response_model=List[JiraTaskInDB], response_model_by_alias=False)
-async def read_jiratasks(
+async def read_all_jiratasks(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_jiratask_collection)
@@ -42,7 +42,7 @@ async def read_jiratasks(
     return [JiraTaskInDB(**jt) for jt in jiratasks]
 
 @router.get("/{jira_task_id}", response_model=JiraTaskInDB, response_model_by_alias=False)
-async def read_jiratask(
+async def read_jiratask_by_id(
     jira_task_id: str = Path(..., description="The BSON ObjectId of the Jira task as a string"),
     collection = Depends(get_jiratask_collection)
 ):

@@ -36,7 +36,7 @@ async def create_meeting(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating meeting: {e}")
 
 @router.get("/", response_model=List[MeetingInDB], response_model_by_alias=False)
-async def read_meetings(
+async def read_all_meetings(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_meeting_collection)
@@ -47,7 +47,7 @@ async def read_meetings(
     return [MeetingInDB(**meeting) for meeting in meetings]
 
 @router.get("/{meet_id}", response_model=MeetingInDB, response_model_by_alias=False)
-async def read_meeting(
+async def read_meeting_by_id(
     meet_id: str = Path(..., description="The BSON ObjectId of the meeting (meet_id) as a string"),
     collection = Depends(get_meeting_collection)
 ):

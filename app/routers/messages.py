@@ -32,7 +32,7 @@ async def create_message(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating message: {e}")
 
 @router.get("/", response_model=List[MessageInDB], response_model_by_alias=False)
-async def read_messages(
+async def read_all_messages(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_message_collection)
@@ -43,7 +43,7 @@ async def read_messages(
     return [MessageInDB(**msg) for msg in messages]
 
 @router.get("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
-async def read_message(
+async def read_message_by_id(
     mid: str = Path(..., description="The BSON ObjectId of the message (mid) as a string"),
     collection = Depends(get_message_collection)
 ):

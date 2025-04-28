@@ -31,7 +31,7 @@ async def create_project(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating project: {e}")
 
 @router.get("/", response_model=List[ProjectInDB], response_model_by_alias=False)
-async def read_projects(
+async def read_all_projects(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_project_collection)
@@ -42,7 +42,7 @@ async def read_projects(
     return [ProjectInDB(**p) for p in projects]
 
 @router.get("/{pid}", response_model=ProjectInDB, response_model_by_alias=False)
-async def read_project(
+async def read_project_by_id(
     pid: str = Path(..., description="The BSON ObjectId of the project (pid) as a string"),
     collection = Depends(get_project_collection)
 ):

@@ -31,7 +31,7 @@ async def create_feedback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating feedback: {e}")
 
 @router.get("/", response_model=List[FeedbackInDB])
-async def read_feedbacks(
+async def read_all_feedbacks(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_feedback_collection)
@@ -44,7 +44,7 @@ async def read_feedbacks(
     return [FeedbackInDB(**fb) for fb in feedbacks]
 
 @router.get("/{feedback_id}", response_model=FeedbackInDB)
-async def read_feedback(
+async def read_feedback_by_id(
     feedback_id: str = Path(..., description="The BSON ObjectId of the feedback as a string"),
     collection = Depends(get_feedback_collection)
 ):

@@ -31,7 +31,7 @@ async def create_user(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating user: {e}")
 
 @router.get("/", response_model=List[UserInDB], response_model_by_alias=False)
-async def read_users(
+async def read_all_users(
     skip: int = 0,
     limit: int = 100,
     collection = Depends(get_user_collection)
@@ -42,7 +42,7 @@ async def read_users(
     return [UserInDB(**user) for user in users]
 
 @router.get("/{user_id}", response_model=UserInDB, response_model_by_alias=False)
-async def read_user(
+async def read_user_by_id(
     user_id: str = Path(..., description="The BSON ObjectId of the user as a string"),
     collection = Depends(get_user_collection)
 ):
