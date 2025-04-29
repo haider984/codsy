@@ -85,21 +85,22 @@ async def read_message_ids_by_pid(
 
     return message_ids
 
-@router.get("/processed/", response_model=List[MessageInDB], response_model_by_alias=False)
-async def read_processed_messages(
+@router.get("/by_processed_status/", response_model=List[MessageInDB], response_model_by_alias=False)
+async def read_messages_by_processed_status(
+    processed_status: bool = Query(..., description="Filter messages by their 'processed' status (true or false)"),
     collection = Depends(get_message_collection)
 ):
-    """Retrieves a list of all messages where 'processed' is true."""
-    query = {"processed": True}
-    # Fetch all matching documents without pagination
+    """Retrieves a list of all messages filtered by the provided 'processed' status."""
+    # Use the boolean value from the query parameter
+    query = {"processed": processed_status}
     messages_cursor = collection.find(query)
-    processed_messages = await messages_cursor.to_list(length=None)
+    filtered_messages = await messages_cursor.to_list(length=None) # Fetch all
     try:
-        return [MessageInDB(**msg) for msg in processed_messages]
+        return [MessageInDB(**msg) for msg in filtered_messages]
     except Exception as e:
          raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error validating processed message data from DB: {e}"
+            detail=f"Error validating message data from DB: {e}"
         )
 
 @router.get("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
