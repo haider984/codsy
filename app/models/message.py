@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from .base import PyObjectId, common_config
 
@@ -26,6 +26,9 @@ class MessageBase(BaseModel):
     processed: bool = False # Default to False
     status: str # "pending", "processing", ...
 
+    # New optional field for replies
+    reply: Optional[str] = None
+
 class MessageCreate(MessageBase):
     # Allow overriding defaults if needed, but generally they should be set by the system
     pass
@@ -38,3 +41,9 @@ class MessageInDB(MessageBase):
 class MessageMidResponse(BaseModel):
     mid: PyObjectId
     # model_config = common_config # Optional, probably not needed just for mid
+
+# --- New response model for GET / ---
+class MessageContentReply(BaseModel):
+    content: str
+    reply: Optional[str] = None
+    # No need for model_config here unless specific serialization is needed

@@ -3,7 +3,7 @@ from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from ..models.message import MessageCreate, MessageInDB, MessageMidResponse # Import Message models
+from ..models.message import MessageCreate, MessageInDB, MessageMidResponse, MessageContentReply # Import Message models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
@@ -31,20 +31,15 @@ async def create_message(
         # Consider more specific error handling based on validation etc.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating message: {e}")
 
-@router.get("/", response_model=List[MessageInDB], response_model_by_alias=False)
+@router.get("/", response_model=List[MessageContentReply], response_model_by_alias=False)
 async def read_all_messages(
     collection = Depends(get_message_collection)
 ):
-    """Retrieves all messages."""
-    messages_cursor = collection.find()
-    messages = await messages_cursor.to_list(length=None)  # Fetch all messages
-    try: 
-        return [MessageInDB(**msg) for msg in messages]
-    except Exception as e:
-         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error validating message data from DB: {e}"
-        )
+    """Retrieves content and reply for all messages."""
+    projection = {"content": 1, "reply": 1, "_id": 0}
+    messages_cursor = collection.find({}, projection)
+    messages_data = await messages_cursor.to_list(length=None)
+    return [MessageContentReply(**msg) for msg in messages_data]
 
 # New endpoint to get messages by status
 @router.get("/by_status/", response_model=List[MessageMidResponse], response_model_by_alias=False)
