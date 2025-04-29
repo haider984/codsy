@@ -15,7 +15,7 @@ class MessageBase(BaseModel):
     msg_id: Optional[str] = None # For email threading/reply
 
     # Slack-specific fields
-    channel: str # Made compulsory again
+    channel: Optional[str] = None # Reverted to Optional to handle existing data
     channel_id: Optional[str] = None # New optional field
     thread_ts: Optional[str] = None
 
