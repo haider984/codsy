@@ -85,6 +85,23 @@ async def read_message_ids_by_pid(
 
     return message_ids
 
+@router.get("/processed/", response_model=List[MessageInDB], response_model_by_alias=False)
+async def read_processed_messages(
+    collection = Depends(get_message_collection)
+):
+    """Retrieves a list of all messages where 'processed' is true."""
+    query = {"processed": True}
+    # Fetch all matching documents without pagination
+    messages_cursor = collection.find(query)
+    processed_messages = await messages_cursor.to_list(length=None)
+    try:
+        return [MessageInDB(**msg) for msg in processed_messages]
+    except Exception as e:
+         raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating processed message data from DB: {e}"
+        )
+
 @router.get("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
 async def read_message_by_id(
     mid: str = Path(..., description="The BSON ObjectId of the message (mid) as a string"),
