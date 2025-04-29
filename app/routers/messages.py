@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Query
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -39,6 +39,30 @@ async def read_all_messages(
     """Retrieves a list of messages with pagination."""
     messages_cursor = collection.find().skip(skip).limit(limit)
     messages = await messages_cursor.to_list(length=limit)
+    return [MessageInDB(**msg) for msg in messages]
+
+# New endpoint to get messages by status
+@router.get("/by_status/", response_model=List[MessageInDB], response_model_by_alias=False)
+async def read_messages_by_status(
+    status: str = Query(..., description="The status value to filter messages by (e.g., 'pending', 'processing')"),
+    skip: int = 0,
+    limit: int = 100,
+    collection = Depends(get_message_collection)
+):
+    """Retrieves a list of messages filtered by status, with pagination."""
+    # Basic validation for status if needed (e.g., check against known statuses)
+    # known_statuses = {"pending", "processing", "completed", "failed"}
+    # if status not in known_statuses:
+    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status value: {status}. Must be one of {known_statuses}")
+
+    query = {"status": status}
+    messages_cursor = collection.find(query).skip(skip).limit(limit)
+    messages = await messages_cursor.to_list(length=limit)
+    if not messages:
+        # It's debatable whether to return 404 or an empty list.
+        # Returning an empty list is often preferred for filtered results.
+        # raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No messages found with status '{status}'")
+        pass # Return empty list []
     return [MessageInDB(**msg) for msg in messages]
 
 @router.get("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
