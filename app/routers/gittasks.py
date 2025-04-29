@@ -32,13 +32,11 @@ async def create_gittask(
 
 @router.get("/", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
 async def read__all_gittasks(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_gittask_collection)
 ):
-    """Retrieves a list of GitHub tasks with pagination."""
-    github_tasks_cursor = collection.find().skip(skip).limit(limit)
-    github_tasks = await github_tasks_cursor.to_list(length=limit)
+    """Retrieves all GitHub tasks."""
+    github_tasks_cursor = collection.find()
+    github_tasks = await github_tasks_cursor.to_list(length=None)  # Fetch all GitHub tasks
     return [GitHubTaskInDB(**gt) for gt in github_tasks]
 
 @router.get("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)

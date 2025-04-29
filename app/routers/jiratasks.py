@@ -32,13 +32,11 @@ async def create_jiratask(
 
 @router.get("/", response_model=List[JiraTaskInDB], response_model_by_alias=False)
 async def read_all_jiratasks(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_jiratask_collection)
 ):
-    """Retrieves a list of Jira tasks with pagination."""
-    jiratasks_cursor = collection.find().skip(skip).limit(limit)
-    jiratasks = await jiratasks_cursor.to_list(length=limit)
+    """Retrieves all Jira tasks."""
+    jiratasks_cursor = collection.find()
+    jiratasks = await jiratasks_cursor.to_list(length=None)  # Fetch all Jira tasks
     return [JiraTaskInDB(**jt) for jt in jiratasks]
 
 @router.get("/{jira_task_id}", response_model=JiraTaskInDB, response_model_by_alias=False)

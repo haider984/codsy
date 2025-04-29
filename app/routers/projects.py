@@ -32,13 +32,11 @@ async def create_project(
 
 @router.get("/", response_model=List[ProjectInDB], response_model_by_alias=False)
 async def read_all_projects(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_project_collection)
 ):
-    """Retrieves a list of projects with pagination."""
-    projects_cursor = collection.find().skip(skip).limit(limit)
-    projects = await projects_cursor.to_list(length=limit)
+    """Retrieves all projects."""
+    projects_cursor = collection.find()
+    projects = await projects_cursor.to_list(length=None)  # Fetch all projects
     return [ProjectInDB(**p) for p in projects]
 
 @router.get("/{pid}", response_model=ProjectInDB, response_model_by_alias=False)

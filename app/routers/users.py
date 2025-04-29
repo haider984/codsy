@@ -31,13 +31,11 @@ async def create_user(
 
 @router.get("/", response_model=List[UserInDB], response_model_by_alias=False)
 async def read_all_users(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_user_collection)
 ):
-    """Retrieves a list of users with pagination."""
-    users_cursor = collection.find().skip(skip).limit(limit)
-    users = await users_cursor.to_list(length=limit)
+    """Retrieves all users."""
+    users_cursor = collection.find()
+    users = await users_cursor.to_list(length=None)  # Fetch all users
     return [UserInDB(**user) for user in users]
 
 @router.get("/{user_id}", response_model=UserInDB, response_model_by_alias=False)

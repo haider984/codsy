@@ -37,13 +37,11 @@ async def create_meeting(
 
 @router.get("/", response_model=List[MeetingInDB], response_model_by_alias=False)
 async def read_all_meetings(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_meeting_collection)
 ):
-    """Retrieves a list of meetings with pagination."""
-    meetings_cursor = collection.find().skip(skip).limit(limit)
-    meetings = await meetings_cursor.to_list(length=limit)
+    """Retrieves all meetings."""
+    meetings_cursor = collection.find()
+    meetings = await meetings_cursor.to_list(length=None)  # Fetch all meetings
     return [MeetingInDB(**meeting) for meeting in meetings]
 
 @router.get("/{meet_id}", response_model=MeetingInDB, response_model_by_alias=False)
