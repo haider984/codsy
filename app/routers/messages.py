@@ -33,15 +33,12 @@ async def create_message(
 
 @router.get("/", response_model=List[MessageInDB], response_model_by_alias=False)
 async def read_all_messages(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_message_collection)
 ):
-    """Retrieves a list of messages with pagination."""
-    messages_cursor = collection.find().skip(skip).limit(limit)
-    messages = await messages_cursor.to_list(length=limit)
-    # Need to handle potential validation errors if data in DB doesn't match model
-    try:
+    """Retrieves all messages."""
+    messages_cursor = collection.find()
+    messages = await messages_cursor.to_list(length=None)  # Fetch all messages
+    try: 
         return [MessageInDB(**msg) for msg in messages]
     except Exception as e:
          raise HTTPException(
@@ -50,20 +47,17 @@ async def read_all_messages(
         )
 
 # New endpoint to get messages by status
-@router.get("/by_status/", response_model=List[MessageInDB], response_model_by_alias=False)
+@router.get("/by_status/", response_model=List[MessageMidResponse], response_model_by_alias=False)
 async def read_messages_by_status(
     status: str = Query(..., description="The status value to filter messages by (e.g., 'pending', 'processing')"),
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_message_collection)
 ):
-    """Retrieves a list of messages filtered by status, with pagination."""
+    """Retrieves a list of message IDs filtered by status."""
     query = {"status": status}
-    messages_cursor = collection.find(query).skip(skip).limit(limit)
-    messages = await messages_cursor.to_list(length=limit)
-    # Need to handle potential validation errors if data in DB doesn't match model
-    try:
-        return [MessageInDB(**msg) for msg in messages]
+    messages_cursor = collection.find(query, {"_id": 1})  # Only fetch the '_id' field
+    messages = await messages_cursor.to_list(length=None)  # Fetch all matching messages
+    try: 
+        return [MessageMidResponse(mid=msg["_id"]) for msg in messages]
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
