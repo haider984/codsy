@@ -4,3 +4,9 @@ motor
 pydantic[email]
 pydantic-settings
 pymongo
+celery[redis]
+requests
+python-dotenv
+langchain-groq
+beautifulsoup4
+langchain

@@ -1,6 +1,10 @@
 version: '3.8'
 
 services:
+  redis: # Add Redis service
+    image: redis:alpine
+    restart: always
+
   web:
     build: .  # Build the image from the Dockerfile in the current directory
     ports:
@@ -9,6 +13,58 @@ services:
       - ./app:/app/app # Mount your app directory for live code reloading (development)
     env_file:
       - .env         # Load environment variables from the .env file
+    # Ensure the web service also knows the broker URL if it needs to send tasks
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - BASE_API_URL=http://web:8000 # Worker needs to reach the API internally
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # Override CMD for development reload
+    depends_on:
+      - redis # Web depends on Redis if it sends tasks
     # depends_on: # Add if you were running MongoDB in another Docker container
     #   - db
+
+  worker: # Add Celery worker service
+    build: .
+    # Command to start ONE celery worker.
+    # Points to the celery app instance we will create in app.celery_app
+    # The task name 'app.listeners.email_listener.poll_inbox_task' will be defined later
+    command: celery -A app.celery_app worker --loglevel=info -Q email_queue # Assign to a specific queue
+    volumes:
+      - ./app:/app/app # Mount code same as web
+    env_file:
+      - .env         # Load same environment variables
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
+      - BASE_API_URL=http://web:8000 # Worker needs to reach the API internally
+    depends_on:
+      - redis
+      - web # Worker might depend on the web API being available
+    restart: always # Restart worker if it fails
+    deploy:
+      replicas: 4 # Run 4 instances of this worker service
+
+  beat: # Add Celery Beat service
+    build: .
+    # Command to start Celery Beat - REMOVED Django scheduler
+    command: celery -A app.celery_app beat --loglevel=info
+    volumes:
+      - ./app:/app/app
+      # Optional: Persist the schedule file across container restarts
+      # - celerybeat_schedule:/schedule
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Add other necessary env vars if beat accesses DB or APIs directly
+    depends_on:
+      - redis
+    restart: always
+
+# Optional: Define a network if needed, especially for service discovery
+# networks:
+#   default:
+#     driver: bridge
+
+# Optional: Define the volume for persisting the schedule
+# volumes:
+#   celerybeat_schedule:
