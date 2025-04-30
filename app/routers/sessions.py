@@ -32,13 +32,11 @@ async def create_session(
 
 @router.get("/", response_model=List[SessionInDB], response_model_by_alias=False)
 async def read_all_sessions(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_session_collection)
 ):
-    """Retrieves a list of sessions with pagination."""
-    sessions_cursor = collection.find().skip(skip).limit(limit)
-    sessions = await sessions_cursor.to_list(length=limit)
+    """Retrieves all sessions."""
+    sessions_cursor = collection.find()
+    sessions = await sessions_cursor.to_list(length=None)  # Fetch all sessions
     return [SessionInDB(**session) for session in sessions]
 
 @router.get("/{session_id}", response_model=SessionInDB, response_model_by_alias=False)

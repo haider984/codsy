@@ -32,13 +32,11 @@ async def create_jiratask(
 
 @router.get("/", response_model=List[JiraTaskInDB], response_model_by_alias=False)
 async def read_all_jiratasks(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_jiratask_collection)
 ):
-    """Retrieves a list of Jira tasks with pagination."""
-    jiratasks_cursor = collection.find().skip(skip).limit(limit)
-    jiratasks = await jiratasks_cursor.to_list(length=limit)
+    """Retrieves all Jira tasks."""
+    jiratasks_cursor = collection.find()
+    jiratasks = await jiratasks_cursor.to_list(length=None)  # Fetch all Jira tasks
     return [JiraTaskInDB(**jt) for jt in jiratasks]
 
 @router.get("/{jira_task_id}", response_model=JiraTaskInDB, response_model_by_alias=False)
@@ -85,3 +83,27 @@ async def delete_jiratask(
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Jira task with id {jira_task_id} not found for deletion")
     return
+
+@router.get("/by_message/{mid}", response_model=List[JiraTaskInDB], response_model_by_alias=False)
+async def read_jiratasks_by_message_id(
+    mid: str = Path(..., description="The string representation of the message ID (mid)"),
+    collection = Depends(get_jiratask_collection)
+):
+    """Retrieves all Jira tasks associated with a specific message ID (mid) stored as a string."""
+    # validated_message_oid = validate_object_id_sync(mid) # REMOVE or comment out
+
+    # Query by the 'mid' field as a STRING
+    query = {"mid": mid} # Use the input string directly
+    tasks_cursor = collection.find(query)
+    tasks_list = await tasks_cursor.to_list(length=None) # Fetch all
+
+    # Basic validation - consider more robust error handling if needed
+    try:
+        # The tasks retrieved should still conform to JiraTaskInDB for the response
+        return [JiraTaskInDB(**task) for task in tasks_list]
+    except Exception as e:
+        # Handle potential validation errors if DB data doesn't match model
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating Jira task data for message {mid}: {e}"
+        )

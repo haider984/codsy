@@ -1,12 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Query
 from typing import List
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from ..models.message import MessageCreate, MessageInDB, MessageMidResponse # Import Message models
+from ..models.message import MessageCreate, MessageInDB, MessageMidResponse, MessageContentReply # Import Message models
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
+from ..models.base import PyObjectId # Import PyObjectId for response model
 
 router = APIRouter()
 
@@ -30,16 +31,72 @@ async def create_message(
         # Consider more specific error handling based on validation etc.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating message: {e}")
 
-@router.get("/", response_model=List[MessageInDB], response_model_by_alias=False)
+@router.get("/", response_model=List[MessageContentReply], response_model_by_alias=False)
 async def read_all_messages(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_message_collection)
 ):
-    """Retrieves a list of messages with pagination."""
-    messages_cursor = collection.find().skip(skip).limit(limit)
-    messages = await messages_cursor.to_list(length=limit)
-    return [MessageInDB(**msg) for msg in messages]
+    """Retrieves content and reply for all messages."""
+    projection = {"content": 1, "reply": 1, "_id": 0}
+    messages_cursor = collection.find({}, projection)
+    messages_data = await messages_cursor.to_list(length=None)
+    return [MessageContentReply(**msg) for msg in messages_data]
+
+# New endpoint to get messages by status
+@router.get("/by_status/", response_model=List[MessageMidResponse], response_model_by_alias=False)
+async def read_messages_by_status(
+    status: str = Query(..., description="The status value to filter messages by (e.g., 'pending', 'processing')"),
+    collection = Depends(get_message_collection)
+):
+    """Retrieves a list of message IDs filtered by status."""
+    query = {"status": status}
+    messages_cursor = collection.find(query, {"_id": 1})  # Only fetch the '_id' field
+    messages = await messages_cursor.to_list(length=None)  # Fetch all matching messages
+    try: 
+        return [MessageMidResponse(mid=msg["_id"]) for msg in messages]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating message data from DB: {e}"
+        )
+
+# Endpoint to get messages by PID
+@router.get("/by_pid/", response_model=List[PyObjectId], response_model_by_alias=False)
+async def read_message_ids_by_pid(
+    pid: str = Query(..., description="The string representation of the project ID (pid) to filter messages by"),
+    collection = Depends(get_message_collection)
+):
+    """Retrieves a list of message IDs (mid) for a given project ID (pid) stored as a string."""
+    # validated_pid = validate_object_id_sync(pid) # REMOVE or comment out this line
+
+    # Query only for the _id field, matching pid as a STRING
+    query = {"pid": pid} # Use the input string directly in the query
+    projection = {"_id": 1}
+    messages_cursor = collection.find(query, projection)
+
+    # Extract the _id values
+    # Note: The response model is List[PyObjectId], so the _id values themselves
+    # should still be ObjectIds, which is correct.
+    message_ids = [doc["_id"] async for doc in messages_cursor]
+
+    return message_ids
+
+@router.get("/by_processed_status/", response_model=List[MessageInDB], response_model_by_alias=False)
+async def read_messages_by_processed_status(
+    processed_status: bool = Query(..., description="Filter messages by their 'processed' status (true or false)"),
+    collection = Depends(get_message_collection)
+):
+    """Retrieves a list of all messages filtered by the provided 'processed' status."""
+    # Use the boolean value from the query parameter
+    query = {"processed": processed_status}
+    messages_cursor = collection.find(query)
+    filtered_messages = await messages_cursor.to_list(length=None) # Fetch all
+    try:
+        return [MessageInDB(**msg) for msg in filtered_messages]
+    except Exception as e:
+         raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating message data from DB: {e}"
+        )
 
 @router.get("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
 async def read_message_by_id(
@@ -49,9 +106,16 @@ async def read_message_by_id(
     """Retrieves a specific message by ID (mid)."""
     validated_message_oid = validate_object_id_sync(mid)
     message = await collection.find_one({"_id": validated_message_oid})
-    if message:
+    if not message:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message with mid {mid} not found")
+    # Need to handle potential validation errors if data in DB doesn't match model
+    try:
         return MessageInDB(**message)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message with mid {mid} not found")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating message data from DB for mid {mid}: {e}"
+        )
 
 @router.put("/{mid}", response_model=MessageInDB, response_model_by_alias=False)
 async def update_message(
@@ -71,9 +135,16 @@ async def update_message(
         {"$set": message_dict},
         return_document=ReturnDocument.AFTER
     )
-    if updated_message:
+    if not updated_message:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message with mid {mid} not found for update")
+    # Need to handle potential validation errors if data in DB doesn't match model
+    try:
         return MessageInDB(**updated_message)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message with mid {mid} not found for update")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating updated message data from DB for mid {mid}: {e}"
+        )
 
 @router.delete("/{mid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_message(
@@ -85,4 +156,4 @@ async def delete_message(
     delete_result = await collection.delete_one({"_id": validated_message_oid})
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Message with mid {mid} not found for deletion")
-    return
+    # No return needed for 204

@@ -32,13 +32,11 @@ async def create_gittask(
 
 @router.get("/", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
 async def read__all_gittasks(
-    skip: int = 0,
-    limit: int = 100,
     collection = Depends(get_gittask_collection)
 ):
-    """Retrieves a list of GitHub tasks with pagination."""
-    github_tasks_cursor = collection.find().skip(skip).limit(limit)
-    github_tasks = await github_tasks_cursor.to_list(length=limit)
+    """Retrieves all GitHub tasks."""
+    github_tasks_cursor = collection.find()
+    github_tasks = await github_tasks_cursor.to_list(length=None)  # Fetch all GitHub tasks
     return [GitHubTaskInDB(**gt) for gt in github_tasks]
 
 @router.get("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
@@ -85,3 +83,27 @@ async def delete_gittask(
     if delete_result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub task with id {git_task_id} not found for deletion")
     return
+
+@router.get("/by_message/{mid}", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
+async def read_gittasks_by_message_id(
+    mid: str = Path(..., description="The string representation of the message ID (mid)"),
+    collection = Depends(get_gittask_collection)
+):
+    """Retrieves all GitHub tasks associated with a specific message ID (mid) stored as a string."""
+    # validated_message_oid = validate_object_id_sync(mid) # REMOVE or comment out
+
+    # Query by the 'mid' field as a STRING
+    query = {"mid": mid} # Use the input string directly
+    tasks_cursor = collection.find(query)
+    tasks_list = await tasks_cursor.to_list(length=None) # Fetch all
+
+    # Basic validation - consider more robust error handling if needed
+    try:
+        # The tasks retrieved should still conform to GitHubTaskInDB for the response
+        return [GitHubTaskInDB(**task) for task in tasks_list]
+    except Exception as e:
+        # Handle potential validation errors if DB data doesn't match model
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error validating GitHub task data for message {mid}: {e}"
+        )
