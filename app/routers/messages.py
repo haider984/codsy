@@ -36,7 +36,15 @@ async def read_all_messages(
     collection = Depends(get_message_collection)
 ):
     """Retrieves content and reply for all messages."""
-    projection = {"content": 1, "reply": 1, "_id": 0}
+    projection = {
+    "content": 1,
+    "reply": 1,
+    "username": 1,
+    "message_datetime": 1,
+    "channel": 1,
+    "_id": 0
+    }
+
     messages_cursor = collection.find({}, projection)
     messages_data = await messages_cursor.to_list(length=None)
     return [MessageContentReply(**msg) for msg in messages_data]
