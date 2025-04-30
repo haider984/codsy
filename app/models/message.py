@@ -7,6 +7,7 @@ class MessageBase(BaseModel):
     sid: PyObjectId # Foreign key to Session
     uid: PyObjectId # Foreign key to User
     pid: PyObjectId # Foreign key to Project
+    username:str
     content: str
     message_datetime: datetime = Field(default_factory=datetime.utcnow) # Use default factory
     source: str # "email" or "slack"
@@ -46,4 +47,9 @@ class MessageMidResponse(BaseModel):
 class MessageContentReply(BaseModel):
     content: str
     reply: Optional[str] = None
-    # No need for model_config here unless specific serialization is needed
+    username: Optional[str] = None
+    message_datetime: Optional[datetime] = None
+    channel: Optional[str] = None
+
+    class Config:
+        orm_mode = True
