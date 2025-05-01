@@ -190,7 +190,7 @@ def send_pending_replies_task():
             skipped_count += 1
             continue
 
-        channel = message.get("channel", "").lower()
+        channel = message.get("source", "").lower()
         reply = message.get("reply")
 
         if not reply:
