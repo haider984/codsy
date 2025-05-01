@@ -20,7 +20,7 @@ celery_app = Celery(
     broker=broker_url,
     backend=broker_url, # Using Redis as backend too (optional)
     # Include both email and slack listener modules
-    include=['app.listeners.email', 'app.listeners.slack', 'app.listeners.intent_classifier']
+    include=['app.listeners.email', 'app.listeners.slack', 'app.listeners.intent_classifier', 'app.listeners.slack_reply']
 )
 
 # Optional configuration settings
@@ -43,6 +43,7 @@ celery_app.conf.task_routes = {
     'app.listeners.email_listener.poll_inbox_task': {'queue': 'email_queue'},
     'app.listeners.slack.process_slack_message_task': {'queue': 'slack_queue'},
     'app.listeners.intent_classifier.process_unprocessed_messages_task': {'queue': 'classifier_queue'},
+    'app.listeners.slack_reply.send_pending_replies_task': {'queue': 'reply_queue'},
     # Add routes for other tasks if needed
 }
 
@@ -53,10 +54,15 @@ celery_app.conf.beat_schedule = {
         'schedule': 5.0, # Run every 30 seconds
         'options': {'queue': 'email_queue'} # Ensure scheduled task goes to the right queue
     },
-    'classify-messages-every-5-seconds': { # Descriptive name
+    'classify-messages-every-10-seconds': { # Keep classifier less frequent due to rate limits
         'task': 'app.listeners.intent_classifier.process_unprocessed_messages_task',
+        'schedule': 10.0,
+        'options': {'queue': 'classifier_queue'}
+    },
+    'send-replies-every-5-seconds': { # Descriptive name
+        'task': 'app.listeners.slack_reply.send_pending_replies_task',
         'schedule': 5.0, # Run every 5 seconds
-        'options': {'queue': 'classifier_queue'} # Route scheduled task to the correct queue
+        'options': {'queue': 'reply_queue'} # Route scheduled task to the correct queue
     },
     # Add other scheduled tasks here if needed
 }

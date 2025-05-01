@@ -41,6 +41,11 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
       # Worker needs internal API URL to call back to 'web' service
       - INTERNAL_BASE_API_URL=http://web:8000
+      # Needs Graph API creds for sending replies
+      - TENANT_ID=${TENANT_ID}
+      - CLIENT_ID=${CLIENT_ID}
+      - CLIENT_SECRET=${CLIENT_SECRET}
+      - USER_EMAIL=${USER_EMAIL}
     depends_on:
       - redis
       - web # Worker might depend on the web API being available
@@ -119,6 +124,27 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       # Worker needs the internal API URL to call back to the 'web' service
       - INTERNAL_BASE_API_URL=http://web:8000
+    depends_on:
+      - redis
+      - web # Depends on the API service being available
+    restart: always
+
+  # ---- REPLY WORKER SERVICE ----
+  reply_worker: # Worker dedicated to sending replies
+    build: .
+    # Command to start celery worker listening ONLY to the reply queue
+    command: celery -A app.celery_app worker --loglevel=info -Q reply_queue
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env # Needs SLACK_BOT_TOKEN, Graph API creds
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - INTERNAL_BASE_API_URL=http://web:8000
+      - TENANT_ID=${TENANT_ID}
+      - CLIENT_ID=${CLIENT_ID}
+      - CLIENT_SECRET=${CLIENT_SECRET}
+      - USER_EMAIL=${USER_EMAIL}
     depends_on:
       - redis
       - web # Depends on the API service being available
