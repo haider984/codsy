@@ -266,7 +266,7 @@ def create_message_in_db(username, subject, body_preview, msg_id, sender_email):
         "message_datetime": datetime.now(timezone.utc).isoformat(), # Use timezone-aware UTC time
         "source": "email",
         "msg_id": msg_id, # Microsoft Graph message ID
-        "channel": sender_email, # Store sender's email as the channel
+        "channel": "email", # Store sender's email as the channel
         "thread_ts": "", # Not applicable for primary email usually
         "channel_id": "", # Not applicable for email
         "message_type": "received", # Indicate it's an incoming message

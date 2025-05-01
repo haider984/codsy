@@ -4,6 +4,8 @@ services:
   redis: # Add Redis service
     image: redis:alpine
     restart: always
+    # networks: # Uncomment if using custom network
+    #   - default
 
   web:
     build: .  # Build the image from the Dockerfile in the current directory
@@ -15,42 +17,85 @@ services:
       - .env         # Load environment variables from the .env file
     # Ensure the web service also knows the broker URL if it needs to send tasks
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - BASE_API_URL=http://web:8000 # Worker needs to reach the API internally
+      # Define internal URL base for API service itself
+      - BASE_API_URL=http://web:8000
+      # Web might need Broker URL if it *sends* tasks (unlikely here)
+      # - CELERY_BROKER_URL=redis://redis:6379/0
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # Override CMD for development reload
     depends_on:
       - redis # Web depends on Redis if it sends tasks
     # depends_on: # Add if you were running MongoDB in another Docker container
     #   - db
+    restart: unless-stopped
+    # networks: # Uncomment if using custom network
+    #   - default
 
-  worker: # Add Celery worker service
+  email_worker: # Worker for email tasks
     build: .
-    # Command to start ONE celery worker.
-    # Points to the celery app instance we will create in app.celery_app
-    # The task name 'app.listeners.email_listener.poll_inbox_task' will be defined later
-    command: celery -A app.celery_app worker --loglevel=info -Q email_queue # Assign to a specific queue
+    command: celery -A app.celery_app worker --loglevel=info -Q email_queue
     volumes:
       - ./app:/app/app # Mount code same as web
     env_file:
       - .env         # Load same environment variables
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
-      - BASE_API_URL=http://web:8000 # Worker needs to reach the API internally
+      # Worker needs internal API URL to call back to 'web' service
+      - INTERNAL_BASE_API_URL=http://web:8000
     depends_on:
       - redis
       - web # Worker might depend on the web API being available
     restart: always # Restart worker if it fails
-    deploy:
-      replicas: 4 # Run 4 instances of this worker service
+    # networks: # Uncomment if using custom network
+    #   - default
 
-  beat: # Add Celery Beat service
+  # ---- SLACK SERVICES ----
+
+  slack_listener: # Runs the python script to listen via Socket Mode
     build: .
-    # Command to start Celery Beat - REMOVED Django scheduler
-    command: celery -A app.celery_app beat --loglevel=info
+    # Command to run the slack listener script directly
+    command: python -m app.listeners.slack
     volumes:
       - ./app:/app/app
-      # Optional: Persist the schedule file across container restarts
-      # - celerybeat_schedule:/schedule
+    env_file:
+      - .env # MUST contain SLACK_BOT_TOKEN and SLACK_APP_TOKEN
+    environment:
+      # Listener needs broker URL to *send* tasks to the worker
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
+      # - INTERNAL_BASE_API_URL=http://web:8000
+    depends_on:
+      - redis # Depends on broker to send tasks
+      # - web # Only if it calls the API directly
+    restart: always
+    # networks: # Uncomment if using custom network
+    #   - default
+
+  slack_worker: # Worker dedicated to processing tasks from the slack_queue
+    build: .
+    # Command to start celery worker listening ONLY to the slack queue
+    command: celery -A app.celery_app worker --loglevel=info -Q slack_queue
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env # Needs ALL env vars required by the slack task
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Worker needs the internal API URL to call back to the 'web' service
+      - INTERNAL_BASE_API_URL=http://web:8000
+    depends_on:
+      - redis
+      - web
+    restart: always
+    # networks: # Uncomment if using custom network
+    #   - default
+
+  # ---- BEAT SERVICE ----
+
+  beat: # Schedules the email polling task
+    build: .
+    # Corrected Command: Use the default Celery Beat scheduler
+    command: celery -A app.celery_app beat --loglevel=info
+    # volumes: # Temporarily commented out
     env_file:
       - .env
     environment:
@@ -58,13 +103,5 @@ services:
       # Add other necessary env vars if beat accesses DB or APIs directly
     depends_on:
       - redis
+      # - web # Only if beat calls the API
     restart: always
-
-# Optional: Define a network if needed, especially for service discovery
-# networks:
-#   default:
-#     driver: bridge
-
-# Optional: Define the volume for persisting the schedule
-# volumes:
-#   celerybeat_schedule:
