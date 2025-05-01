@@ -9,6 +9,7 @@ class JiraTaskBase(BaseModel):
     title: str # Added field
     description: str # Made mandatory
     status: str # e.g., "pending", "in_progress", "completed", etc.
+    response: Optional[str] = None 
     creation_date: datetime = Field(default_factory=datetime.utcnow) # Added field with default
     completion_date: Optional[datetime] = None # Added optional field
 
