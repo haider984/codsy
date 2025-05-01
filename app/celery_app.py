@@ -20,7 +20,7 @@ celery_app = Celery(
     broker=broker_url,
     backend=broker_url, # Using Redis as backend too (optional)
     # Include both email and slack listener modules
-    include=['app.listeners.email', 'app.listeners.slack']
+    include=['app.listeners.email', 'app.listeners.slack', 'app.listeners.intent_classifier']
 )
 
 # Optional configuration settings
@@ -42,6 +42,7 @@ celery_app.conf.update(
 celery_app.conf.task_routes = {
     'app.listeners.email_listener.poll_inbox_task': {'queue': 'email_queue'},
     'app.listeners.slack.process_slack_message_task': {'queue': 'slack_queue'},
+    'app.listeners.intent_classifier.process_unprocessed_messages_task': {'queue': 'classifier_queue'},
     # Add routes for other tasks if needed
 }
 
@@ -51,6 +52,11 @@ celery_app.conf.beat_schedule = {
         'task': 'app.listeners.email_listener.poll_inbox_task', # The name of the task to run
         'schedule': 5.0, # Run every 30 seconds
         'options': {'queue': 'email_queue'} # Ensure scheduled task goes to the right queue
+    },
+    'classify-messages-every-5-seconds': { # Descriptive name
+        'task': 'app.listeners.intent_classifier.process_unprocessed_messages_task',
+        'schedule': 5.0, # Run every 5 seconds
+        'options': {'queue': 'classifier_queue'} # Route scheduled task to the correct queue
     },
     # Add other scheduled tasks here if needed
 }

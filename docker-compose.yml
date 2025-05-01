@@ -91,7 +91,7 @@ services:
 
   # ---- BEAT SERVICE ----
 
-  beat: # Schedules the email polling task
+  beat: # Now schedules both email polling AND intent classification
     build: .
     # Corrected Command: Use the default Celery Beat scheduler
     command: celery -A app.celery_app beat --loglevel=info
@@ -105,3 +105,28 @@ services:
       - redis
       # - web # Only if beat calls the API
     restart: always
+
+  # ---- CLASSIFIER WORKER SERVICE ----
+  classifier_worker: # New worker service for the classifier queue
+    build: .
+    # Command to start celery worker listening ONLY to the classifier queue
+    command: celery -A app.celery_app worker --loglevel=info -Q classifier_queue
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env # Needs GROQ_API_KEY and other env vars needed by the task/handlers
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Worker needs the internal API URL to call back to the 'web' service
+      - INTERNAL_BASE_API_URL=http://web:8000
+    depends_on:
+      - redis
+      - web # Depends on the API service being available
+    restart: always
+
+# networks:
+#   default:
+#     driver: bridge
+
+# volumes:
+#   celerybeat-schedule:
