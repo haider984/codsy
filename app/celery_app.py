@@ -1,54 +1,48 @@
 import os
 from celery import Celery
-from dotenv import load_dotenv
+# from dotenv import load_dotenv # Removed if using Docker env vars
 
-# Load .env file if it exists (useful for local development outside Docker)
-load_dotenv()
+# load_dotenv()
 
-# Get the broker URL from environment variable set in docker-compose
-broker_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0') # Default for local dev
+# Get broker URL - essential
+# Make sure CELERY_BROKER_URL=redis://redis:6379/0 is in the .env file
+broker_url = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0') # Keep default just in case
+backend_url = os.getenv('CELERY_RESULT_BACKEND', broker_url)
 
-# Define the Celery application instance
-# The first argument is the name of the current module, useful for automatic task discovery
-# The 'broker' argument points to our Redis instance
-# The 'backend' argument is optional, used if you need to store task results (not strictly needed for this listener)
-# Include specifies where Celery should look for task definitions
+print(f"--- [celery_app.py] Initializing Celery app with broker: {broker_url} ---")
+
+# Minimal Celery App definition
 celery_app = Celery(
-    'tasks', # Can be any name, often the project name
+    'tasks', # Application name
     broker=broker_url,
-    backend=broker_url, # Using Redis as backend too (optional)
-    include=['app.listeners.email'] # Tell Celery where to find tasks
+    backend=backend_url,
+    # Ensure include points to the correct module where email.py resides
+    include=['app.listeners.email']
 )
 
-# Optional configuration settings
+print("--- [celery_app.py] Celery app initialized ---")
+
+# Restore configurations if they were removed
 celery_app.conf.update(
     task_serializer='json',
-    accept_content=['json'],  # Ensure tasks use JSON
+    accept_content=['json'],
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
-    # Optional: configure result backend expiration if you store results
-    # result_expires=3600,
 )
 
-# Optional: Add routing for specific tasks to specific queues
-# This ensures our email task goes to the 'email_queue' that our workers listen to
 celery_app.conf.task_routes = {
-    'app.listeners.email_listener.poll_inbox_task': {'queue': 'email_queue'},
-    # Add routes for other tasks if needed
+    'app.listeners.email.poll_inbox_task': {'queue': 'email_queue'},
 }
 
-# Add Celery Beat schedule
 celery_app.conf.beat_schedule = {
-    'poll-email-every-30-seconds': { # A descriptive name for the schedule entry
-        'task': 'app.listeners.email_listener.poll_inbox_task', # The name of the task to run
-        'schedule': 30.0, # Run every 30 seconds
-        # 'args': (arg1, arg2), # Optional arguments to pass to the task
-        # 'options': {'queue' : 'email_queue'} # Ensure it uses the correct queue
+    'poll-email-every-30-seconds': { # Adjust interval as needed
+        'task': 'app.listeners.email.poll_inbox_task',
+        'schedule': 30.0, # e.g., every 30 seconds
     },
-    # Add other scheduled tasks here if needed
 }
 
+# Keep this for direct execution if needed, but Docker uses the command line
 if __name__ == '__main__':
-    # This allows running the worker directly using: python -m app.celery_app worker ...
+    print("--- [celery_app.py] Running as main script ---")
     celery_app.start()

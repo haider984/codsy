@@ -23,39 +23,30 @@ services:
     # depends_on: # Add if you were running MongoDB in another Docker container
     #   - db
 
-  worker: # Add Celery worker service
+  worker:
     build: .
-    # Command to start ONE celery worker.
-    # Points to the celery app instance we will create in app.celery_app
-    # The task name 'app.listeners.email_listener.poll_inbox_task' will be defined later
-    command: celery -A app.celery_app worker --loglevel=info -Q email_queue # Assign to a specific queue
-    volumes:
-      - ./app:/app/app # Mount code same as web
-    env_file:
-      - .env         # Load same environment variables
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
-      - BASE_API_URL=http://web:8000 # Worker needs to reach the API internally
-    depends_on:
-      - redis
-      - web # Worker might depend on the web API being available
-    restart: always # Restart worker if it fails
-    deploy:
-      replicas: 4 # Run 4 instances of this worker service
-
-  beat: # Add Celery Beat service
-    build: .
-    # Command to start Celery Beat - REMOVED Django scheduler
-    command: celery -A app.celery_app beat --loglevel=info
+    # --- Use default prefork pool, specify queue ---
+    command: celery -A app.celery_app worker --loglevel=INFO -Q email_queue
     volumes:
       - ./app:/app/app
-      # Optional: Persist the schedule file across container restarts
-      # - celerybeat_schedule:/schedule
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - web
+    restart: always
+    deploy:
+      replicas: 4 # Use desired number of replicas
+
+  beat: # Keep beat service config
+    build: .
+    command: celery -A app.celery_app beat --loglevel=INFO
+    volumes:
+      - ./app:/app/app
     env_file:
       - .env
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
-      # Add other necessary env vars if beat accesses DB or APIs directly
     depends_on:
       - redis
     restart: always
