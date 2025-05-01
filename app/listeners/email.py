@@ -23,7 +23,10 @@ TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 USER_EMAIL    = os.getenv("USER_EMAIL", "agent.tom@codsy.ai") # Provide default if useful
-BASE_API_URL  = os.getenv("BASE_API_URL", "http://localhost:8000") # Get from env
+# BASE_API_URL is primarily for external access or if the process itself runs outside docker maybe
+# BASE_API_URL  = os.getenv("BASE_API_URL", "http://localhost:8000")
+# --> Use INTERNAL_BASE_API_URL for calls *from* the worker *to* the web service
+INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Default internal URL
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 
@@ -266,7 +269,7 @@ def create_message_in_db(username, subject, body_preview, msg_id, sender_email):
         "message_datetime": datetime.now(timezone.utc).isoformat(), # Use timezone-aware UTC time
         "source": "email",
         "msg_id": msg_id, # Microsoft Graph message ID
-        "channel": "email", # Store sender's email as the channel
+        "channel": sender_email, # Use sender email as channel for email source
         "thread_ts": "", # Not applicable for primary email usually
         "channel_id": "", # Not applicable for email
         "message_type": "received", # Indicate it's an incoming message
@@ -275,28 +278,29 @@ def create_message_in_db(username, subject, body_preview, msg_id, sender_email):
     }
 
     try:
-        api_endpoint = f"{BASE_API_URL}/api/v1/messages/"
-        logger.debug(f"Posting message to {api_endpoint} with payload: {payload}")
+        # Corrected: Use INTERNAL_BASE_API_URL for calls from worker to web service
+        api_endpoint = f"{INTERNAL_BASE_API_URL}/api/v1/messages/"
+        logger.debug(f"[Email Worker] Posting message to {api_endpoint} with payload: {payload}")
         resp = requests.post(api_endpoint, json=payload)
 
         if resp.status_code in (200, 201):
             response_data = resp.json()
             mid = response_data.get("mid") # Assuming your API returns the created message ID as 'mid'
             if mid:
-                logger.info(f"Message saved to DB for msg_id {msg_id}. Received mid: {mid}")
+                logger.info(f"[Email Worker] Message saved to DB for msg_id {msg_id}. Received mid: {mid}")
                 return mid
             else:
-                logger.error(f"Message API response successful for {msg_id}, but 'mid' not found in response: {response_data}")
+                logger.error(f"[Email Worker] Message API response successful for {msg_id}, but 'mid' not found in response: {response_data}")
                 return None
         else:
-            logger.error(f"Failed to save message {msg_id} to DB: {resp.status_code} {resp.text}")
+            logger.error(f"[Email Worker] Failed to save message {msg_id} to DB: {resp.status_code} {resp.text}")
             # Optionally raise an error here depending on how critical this step is
             return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error posting message to DB for msg_id {msg_id}: {e}")
+        logger.error(f"[Email Worker] Network error posting message to DB via {INTERNAL_BASE_API_URL} for msg_id {msg_id}: {e}")
         return None
     except Exception as e: # Catch other potential errors (e.g., JSON decoding)
-        logger.error(f"Unexpected error posting message to DB for msg_id {msg_id}: {e}", exc_info=True)
+        logger.error(f"[Email Worker] Unexpected error posting message to DB for msg_id {msg_id}: {e}", exc_info=True)
         return None
 
 
@@ -308,7 +312,7 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
     Requires the 'mid' (message ID from our DB) to link the meeting to the original email message.
     """
     if not mid:
-        logger.error("Cannot create meeting in DB without a valid 'mid' (message ID).")
+        logger.error("[Email Worker] Cannot create meeting in DB without a valid 'mid' (message ID).")
         return
 
     payload = {
@@ -323,18 +327,19 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
     }
 
     try:
-        api_endpoint = f"{BASE_API_URL}/api/v1/meetings/"
-        logger.debug(f"Posting meeting to {api_endpoint} with payload: {payload}")
+        # Corrected: Use INTERNAL_BASE_API_URL for calls from worker to web service
+        api_endpoint = f"{INTERNAL_BASE_API_URL}/api/v1/meetings/"
+        logger.debug(f"[Email Worker] Posting meeting to {api_endpoint} with payload: {payload}")
         resp = requests.post(api_endpoint, json=payload)
         if resp.status_code in (200, 201):
-            logger.info(f"Meeting created/updated in DB linked to mid: {mid}")
+            logger.info(f"[Email Worker] Meeting created/updated in DB linked to mid: {mid}")
         else:
-            logger.error(f"Failed to create/update meeting in DB for mid {mid}: {resp.status_code} {resp.text}")
+            logger.error(f"[Email Worker] Failed to create/update meeting in DB via {api_endpoint} for mid {mid}: {resp.status_code} {resp.text}")
             # Optionally raise an error
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error posting meeting to DB for mid {mid}: {e}")
+        logger.error(f"[Email Worker] Network error posting meeting to DB via {INTERNAL_BASE_API_URL} for mid {mid}: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error posting meeting to DB for mid {mid}: {e}", exc_info=True)
+        logger.error(f"[Email Worker] Unexpected error posting meeting to DB for mid {mid}: {e}", exc_info=True)
 
 
 # ─── CELERY TASK ─────────────────────────────────────────────────────────────────
@@ -350,11 +355,13 @@ def poll_inbox_task():
     save them to the DB, potentially extract meeting details, and mark as read.
     This task should be run periodically (e.g., by Celery Beat).
     """
-    logger.info("Starting email poll task...")
+    # Use a task-specific logger if desired for clarity
+    task_logger = logging.getLogger(__name__ + ".task")
+    task_logger.info("Starting email poll task...")
     try:
         token = get_access_token() # Get token at the start of the task run
         if not token:
-            logger.error("Failed to get access token. Aborting poll task run.")
+            task_logger.error("Failed to get access token. Aborting poll task run.")
             return # Exit task if token fails
 
         headers = {"Authorization": f"Bearer {token}"}
@@ -365,15 +372,15 @@ def poll_inbox_task():
         messages = resp.json().get('value', [])
 
         if not messages:
-            logger.info("No unread messages found.")
+            task_logger.info("No unread messages found.")
             return # Exit task if no messages
 
-        logger.info(f"Found {len(messages)} unread messages to process.")
+        task_logger.info(f"Found {len(messages)} unread messages to process.")
 
         for msg in messages:
             msg_id = msg.get("id")
             if not msg_id:
-                logger.warning("Found message with no ID, skipping.")
+                task_logger.warning("Found message with no ID, skipping.")
                 continue
 
             # --- Extract Core Information ---
@@ -385,20 +392,20 @@ def poll_inbox_task():
                 html_body = msg.get("body", {}).get("content", "") # Important: content might be None
                 # conversation_id = msg.get("conversationId") # Uncomment if needed
 
-                logger.info(f"Processing message ID: {msg_id} from {sender_email}, Subject: {subject}")
+                task_logger.info(f"Processing message ID: {msg_id} from {sender_email}, Subject: {subject}")
 
                 # --- Save Initial Message to DB ---
                 # Pass sender_email to potentially use it for linking user/project
                 mid = create_message_in_db(username, subject, body_preview, msg_id, sender_email)
                 if not mid:
-                    logger.error(f"Failed to save initial message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
+                    task_logger.error(f"Failed to save initial message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
                     # Decide whether to mark as read or retry later. Marking as read avoids infinite loops on DB errors.
                     # mark_email_as_read(token, msg_id) # Uncomment if you want to mark as read even if DB save fails
                     continue # Skip to next message
 
                 # --- Classify Email ---
                 classification = classify_email_with_llm(html_body or body_preview) # Pass preview if HTML is empty
-                logger.info(f"Message ID: {msg_id} classified as: {classification}")
+                task_logger.info(f"Message ID: {msg_id} classified as: {classification}")
 
                 # --- Process Based on Classification ---
                 if classification == "meeting":
@@ -406,7 +413,7 @@ def poll_inbox_task():
 
                     # Basic check if details were found (improve robustness as needed)
                     if meeting_url != "Not Found" or meeting_id != "Not Found" or passcode != "Not Found":
-                         logger.info(f"Extracted meeting details for msg_id {msg_id}: URL={meeting_url != 'Not Found'}, ID={meeting_id != 'Not Found'}, Passcode={passcode != 'Not Found'}")
+                         task_logger.info(f"Extracted meeting details for msg_id {msg_id}: URL={meeting_url != 'Not Found'}, ID={meeting_id != 'Not Found'}, Passcode={passcode != 'Not Found'}")
                          # TODO: Get actual start/end times. Placeholder for now.
                          # This likely requires fetching the corresponding calendar event using msg['conversationId'] or subject/sender matching
                          # Using fetch_calendar_events and merge_meetings would be the way to go here.
@@ -415,7 +422,7 @@ def poll_inbox_task():
 
                          create_meeting_in_db(sender_email, meeting_url, meeting_id, passcode, start_time, end_time, mid)
                     else:
-                        logger.warning(f"Classified as 'meeting' but failed to extract details for msg_id: {msg_id}")
+                        task_logger.warning(f"Classified as 'meeting' but failed to extract details for msg_id: {msg_id}")
 
                 # --- Mark Email as Read (Important: Do this last) ---
                 # Only mark as read if processing (including DB saving) was reasonably successful
@@ -423,18 +430,18 @@ def poll_inbox_task():
 
             except Exception as inner_e:
                  # Catch errors processing a single message so the loop continues
-                 logger.error(f"Error processing message ID {msg_id}: {inner_e}", exc_info=True)
+                 task_logger.error(f"Error processing message ID {msg_id}: {inner_e}", exc_info=True)
                  # Consider whether to mark as read even on error to avoid retrying a poison message
                  # mark_email_as_read(token, msg_id)
 
-        logger.info("Finished processing batch of emails.")
+        task_logger.info("Finished processing batch of emails.")
 
     except requests.exceptions.RequestException as e:
         # Handle errors fetching the list of messages
-        logger.error(f"HTTP error during email poll: {e}", exc_info=True)
+        task_logger.error(f"HTTP error during email poll: {e}", exc_info=True)
     except Exception as e:
         # Catch-all for other unexpected errors in the task
-        logger.error(f"Unexpected error during email poll task: {e}", exc_info=True)
+        task_logger.error(f"Unexpected error during email poll task: {e}", exc_info=True)
 
 # Remove the __main__ block, Celery workers will run the task
 # if __name__ == "__main__":
