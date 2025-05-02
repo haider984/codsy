@@ -51,6 +51,28 @@ async def read_jiratask_by_id(
         return JiraTaskInDB(**jiratask)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Jira task with id {jira_task_id} not found")
 
+@router.get("/by_status/{status}", response_model=List[JiraTaskInDB], response_model_by_alias=False)
+async def read_jiratasks_by_status(
+    status: str = Path(..., description="The status of the Jira tasks to retrieve (e.g., 'pending', 'precessed')"),
+    collection = Depends(get_jiratask_collection)
+):
+    """Retrieves all Jira tasks by their status."""
+   
+    try:
+        # Query the database for tasks with the given status
+        query = {"status": status}
+        tasks_cursor = collection.find(query)
+        tasks_list = await tasks_cursor.to_list(length=None)  # Fetch all tasks with the specified status
+        # Return the list of tasks
+        return [JiraTaskInDB(**task) for task in tasks_list]
+
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while retrieving tasks with status '{status}': {e}"
+        )
+    
 @router.put("/{jira_task_id}", response_model=JiraTaskInDB, response_model_by_alias=False)
 async def update_jiratask(
     jira_task_update: JiraTaskCreate,

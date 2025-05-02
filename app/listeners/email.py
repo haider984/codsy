@@ -1,5 +1,5 @@
 import os
-import time # Keep time if needed for internal logic, but not for the main sleep
+import time 
 import requests
 from datetime import datetime, timezone, timedelta
 import logging
@@ -7,13 +7,11 @@ import re
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
-# Remove load_dotenv here, it's handled by docker-compose or celery_app.py
-# from dotenv import load_dotenv
+
 
 # Import the Celery app instance we created
 from ..celery_app import celery_app
-# Import settings if needed for shared config (like BASE_API_URL if not passed via env)
-# from ..core.config import settings
+
 
 # ─── SETUP ─────────────────────────────────────────────────────────────────────
 # load_dotenv() # Remove this
@@ -23,9 +21,7 @@ TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 USER_EMAIL    = os.getenv("USER_EMAIL", "agent.tom@codsy.ai") # Provide default if useful
-# BASE_API_URL is primarily for external access or if the process itself runs outside docker maybe
-# BASE_API_URL  = os.getenv("BASE_API_URL", "http://localhost:8000")
-# --> Use INTERNAL_BASE_API_URL for calls *from* the worker *to* the web service
+
 INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Default internal URL
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
@@ -212,17 +208,13 @@ def classify_email_with_llm(html_body):
     try:
         soup = BeautifulSoup(html_body, "html.parser")
         body_text = soup.get_text(separator=" ", strip=True)
-        # Optional: Truncate if bodies can be very large
-        max_length = 4000 # Example limit
-        if len(body_text) > max_length:
-            body_text = body_text[:max_length] + "..."
 
     except Exception as e:
         logger.error(f"Error parsing HTML for classification: {e}")
         body_text = "Error parsing body."
 
     try:
-        llm = ChatGroq(model="llama3-70b-8192", temperature=0.2) # Using known good model, adjust temp
+        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5) # Using known good model, adjust temp
         classification_prompt = PromptTemplate(
             template = """
                 Analyze the following email body and classify its primary purpose.
@@ -253,7 +245,9 @@ def classify_email_with_llm(html_body):
 
 # ─── Create message in Message Table of DB ──────────────────────────────────────────────────────────────
 
-def create_message_in_db(username, subject, body_preview, msg_id, sender_email):
+def create_message_in_db(username, subject, text_content, msg_id, sender_email):
+
+
     # Static IDs - consider making these configurable or dynamic if needed
     sid = "680f69cc5c250a63d068bbec" # Example Session ID
     uid = "680f69605c250a63d068bbeb" # Example User ID (Maybe lookup based on sender_email?)
@@ -264,7 +258,7 @@ def create_message_in_db(username, subject, body_preview, msg_id, sender_email):
         "uid": uid,
         "pid": pid,
         "username": username, # Name of the sender
-        "content": body_preview, # Preview of the email content
+        "content": text_content,
         "reply": "", # Placeholder for replies
         "message_datetime": datetime.now(timezone.utc).isoformat(), # Use timezone-aware UTC time
         "source": "email",
@@ -390,13 +384,20 @@ def poll_inbox_task():
                 subject = msg.get("subject", "No Subject")
                 body_preview = msg.get("bodyPreview", "")
                 html_body = msg.get("body", {}).get("content", "") # Important: content might be None
-                # conversation_id = msg.get("conversationId") # Uncomment if needed
+
+                try:
+                    soup = BeautifulSoup(html_body, "html.parser")
+                    text_content = soup.get_text(separator="\n", strip=True)
+                except Exception as e:
+                    logger.error(f"Error extracting text from HTML: {e}")
+                    text_content = html_body  # Fallback to raw content if parsing fails
+                            # conversation_id = msg.get("conversationId") # Uncomment if needed
 
                 task_logger.info(f"Processing message ID: {msg_id} from {sender_email}, Subject: {subject}")
 
                 # --- Save Initial Message to DB ---
                 # Pass sender_email to potentially use it for linking user/project
-                mid = create_message_in_db(username, subject, body_preview, msg_id, sender_email)
+                mid = create_message_in_db(username, subject, text_content, msg_id, sender_email)
                 if not mid:
                     task_logger.error(f"Failed to save initial message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
                     # Decide whether to mark as read or retry later. Marking as read avoids infinite loops on DB errors.
@@ -404,7 +405,7 @@ def poll_inbox_task():
                     continue # Skip to next message
 
                 # --- Classify Email ---
-                classification = classify_email_with_llm(html_body or body_preview) # Pass preview if HTML is empty
+                classification = classify_email_with_llm(text_content) # Pass text_content for classification
                 task_logger.info(f"Message ID: {msg_id} classified as: {classification}")
 
                 # --- Process Based on Classification ---

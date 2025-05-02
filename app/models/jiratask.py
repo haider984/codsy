@@ -8,7 +8,9 @@ class JiraTaskBase(BaseModel):
     mid: PyObjectId # Foreign key to Message
     title: str # Added field
     description: str # Made mandatory
+    project_issue_key: Optional[str] = None 
     status: str # e.g., "pending", "in_progress", "completed", etc.
+    response: Optional[str] = None 
     creation_date: datetime = Field(default_factory=datetime.utcnow) # Added field with default
     completion_date: Optional[datetime] = None # Added optional field
 
