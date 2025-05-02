@@ -51,6 +51,28 @@ async def read_gittask_by_id(
         return GitHubTaskInDB(**github_task)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub task with id {git_task_id} not found")
 
+@router.get("/by_status/{status}", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
+async def read_gittasks_by_status(
+    status: str = Path(..., description="The status of the GitHub tasks to retrieve (e.g., 'pending', 'precessed')"),
+    collection = Depends(get_gittask_collection)
+):
+    """Retrieves all GitHub tasks by their status."""
+   
+    try:
+        # Query the database for tasks with the given status
+        query = {"status": status}
+        tasks_cursor = collection.find(query)
+        tasks_list = await tasks_cursor.to_list(length=None)  # Fetch all tasks with the specified status
+        # Return the list of tasks
+        return [GitHubTaskInDB(**task) for task in tasks_list]
+
+    except Exception as e:
+        # Handle unexpected errors
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while retrieving tasks with status '{status}': {e}"
+        )
+    
 @router.put("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
 async def update_gittask(
     github_task_update: GitHubTaskCreate,

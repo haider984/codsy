@@ -26,7 +26,9 @@ def fetch_message(mid):
 
 def analyze_tasks_with_llm(content):
     prompt = f"""
-You are a task analyzer. Given message content, extract clear tasks and decide whether each task belongs in GitHub or Jira.
+You are a task analyzer. IMPORTANT: Given message content, extract each GITHUB and JIRA related task and decide whether each task belongs in GitHub or Jira.
+IMPORTANT: Analyze the message content completely and see if there is any task that can be extracted.
+IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task.
 
 Required JSON format:
 [
@@ -71,7 +73,7 @@ Example Output (JSON):
     "platform": "jira"
   }},
   {{
-    "title": "Implement basic DevTrack8 dashboard in HTML/CSS",
+    "title": "Implement basic DevTrack8 dashboard in HTML",
     "description": "Create a single HTML file with a header ('DevTrack8'), a search bar to filter tasks, and a list of 4–5 hardcoded tasks with title, status, and optional tags. Apply basic responsive styling to resemble a web app.",
     "platform": "git"
   }},
@@ -92,7 +94,7 @@ Content:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.5
+            temperature=0.7
         )
         output = response.choices[0].message.content.strip()
         logger.debug(f"Raw LLM response: {output}")
