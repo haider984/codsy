@@ -3,7 +3,7 @@ import logging
 import requests
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
-import groq
+from openai import OpenAI
 from datetime import datetime, timezone
 import json # Ensure json is imported
 
@@ -35,47 +35,66 @@ except (ImportError, AssertionError, NameError) as e:
 generic_handler = GenericMessageHandler()
 
 # --- CONFIGURATION ---
-load_dotenv()
+load_dotenv(override=True)
 # BASE_API_URL is needed by the *worker* executing the task
 INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Use internal URL
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+openai_api_key = os.getenv("INTENT_OPENAI_API_KEY")
 # CHECK_INTERVAL is no longer needed here, scheduling is handled by Celery Beat
 
 # --- GROQ CLIENT SETUP ---
-groq_client = None
-if GROQ_API_KEY:
+
+openai_client = None
+if openai_api_key:
     try:
-        groq_client = groq.Client(api_key=GROQ_API_KEY)
-        logger.info("Groq client initialized in intent_classifier.")
+        openai_client = OpenAI(api_key=openai_api_key)
+        logger.info("OpenAI client initialized in intent_classifier.")
     except Exception as e:
-         logger.error(f"Failed to initialize Groq client in intent_classifier: {e}")
+         logger.error(f"Failed to initialize OpenAI client in intent_classifier: {e}")
 else:
-    logger.warning("GROQ_API_KEY missing in intent_classifier, classification may fail.")
+    logger.warning("INTENT_OPENAI_API_KEY missing in intent_classifier, classification may fail.")
 
 # --- PROMPT TEMPLATES ---
 classification_prompt = PromptTemplate(
     template="""
-You are an AI email classification assistant.
-Classify the **email content** (HTML stripped) into exactly one of the following categories:
+    You are an AI email classification assistant.
+    Classify the **email content** (HTML stripped) into exactly one of the following categories:
 
-  "meeting"     — a meeting invitation or link
-**"transcript"** — A transcript of a meeting or call, discussing GitHub or Jira tasks. Typically includes spoken dialogue or summaries.
-   - *Dialogue Example*:
-     - John: "We need to streamline GitHub and Jira workflows."
-     - Sarah: "I'll create the repo and share it."
-     - Mike: "Let's use the automation script John built."
-   - *Summary Example*: "The meeting covered GitHub repo setup and automation testing with a custom script."
+    "meeting"     — a meeting invitation or link
+    **"transcript"** — A transcript of a meeting or call, discussing GitHub or Jira tasks. IMPORTANT: Typically includes spoken dialogue or summaries.
+    - *Dialogue Example*:
+        - John: "Hi, Guyz, How are you?"
+        - Sarah: "I am good, thanks."
+        - Mike: "I am great. What about you?"
+        - John: "I am good as well."
+        - John: "ok guyz, We need to streamline GitHub and Jira workflows."
+        - Sarah: "I'll create the repo and share it."
+        - Mike: "Let's use the automation script John built."
+    - *Summary Example*: "The meeting covered GitHub repo setup and automation testing with a custom script."
 
-**"instructions"** — Clear action items or steps related to GitHub or Jira, without being a transcript.
-   - *Example*: "Please create a new GitHub repo for XYZ and update the Jira board with the new ticket. or now update index.html in repo Dev to he dashboard should be a single HTML file"
+    **"instructions"** — Clear action items or steps related to GitHub or Jira, without being a transcript.
+    - *Example*: 
+        - *GitHub Examples*:
+            - "Please create a new GitHub repository for XYZ project"
+            - "Update index.html in the Dev repository"
+            - "Add dashboard component to the main branch"
+    
+    - *Jira Examples*:
+            - "Create a new Jira board for the XYZ project"
+            - "Add a ticket for the dashboard implementation"
+            - "Update the story points on DEV-123"
 
-  "greeting"    — everything else (e.g. casual messages, greetings, or anything that doesn't clearly fit above)
+    - *Combined Tasks*:
+            - "Setup GitHub repo for XYZ and create matching Jira board"
+            - "After merging PR, update the Jira ticket status"
 
-Email content:
-{body}
+    **"greeting"** — everything else (e.g. casual messages, greetings, or anything that doesn't clearly fit above)
 
-Return exactly one word from the list above. If uncertain, choose "greeting".
-""",
+
+    Email content:
+    {body}
+
+    Return exactly one word from the list above. If uncertain, choose "greeting".
+    """,
     input_variables=["body"]
 )
 
@@ -138,22 +157,21 @@ def update_message_type(mid, message_type, original_message):
 
 
 def classify_message_content(content):
-    """Use Groq LLM to classify message content"""
-    if not groq_client:
-        logger.error("[Classifier Task] Groq client not initialized (missing GROQ_API_KEY?)")
+    """Use OpenAI LLM to classify message content"""
+    if not openai_client:
+        logger.error("[Classifier Task] OpenAI client not initialized (missing OPENAI_API_KEY?)")
         return "greeting" # Default if client isn't available
 
     try:
         prompt = classification_prompt.format(body=content)
-        logger.debug(f"[Classifier Task] Sending classification request to Groq")
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192", # Using updated model name if necessary
+        logger.debug(f"[Classifier Task] Sending classification request to OpenAI")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=20
+            temperature=0.5
         )
         classification = response.choices[0].message.content.strip().lower()
-        logger.debug(f"[Classifier Task] Groq raw response: '{classification}'")
+        logger.debug(f"[Classifier Task] OpenAI raw response: '{classification}'")
 
         valid_types = ["meeting", "transcript", "instructions", "greeting"]
         found_type = next((vt for vt in valid_types if vt in classification.split()), "greeting")
@@ -161,7 +179,7 @@ def classify_message_content(content):
         logger.info(f"[Classifier Task] Classified content as: {found_type}")
         return found_type
     except Exception as e:
-        logger.error(f"[Classifier Task] Error during Groq classification: {e}", exc_info=True)
+        logger.error(f"[Classifier Task] Error during OpenAI classification: {e}", exc_info=True)
         return "greeting"
 
 

@@ -2,21 +2,22 @@ import os
 import requests
 import logging
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 from datetime import datetime, timezone
+import json
 
 # Load environment
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+load_dotenv(override=True)
+openai_api_key = os.getenv("TASK_ANALYZER_OPENAI_API_KEY")
 # Use INTERNAL_BASE_API_URL for calls made from within worker containers
 INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Default internal URL
 
-client = Groq(api_key=GROQ_API_KEY)
+client = OpenAI(api_key=openai_api_key)
 logger = logging.getLogger("TaskAnalyzer")
 
 def fetch_message(mid):
     try:
-        response = requests.get(f"{BASE_API_URL}/api/v1/messages/{mid}")
+        response = requests.get(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}")
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -27,14 +28,13 @@ def analyze_tasks_with_llm(content):
     prompt = f"""
 You are a task analyzer. Given message content, extract clear tasks and decide whether each task belongs in GitHub or Jira.
 
-Return JSON like this:
+Required JSON format:
 [
   {{
     "title": "Short task title",
     "description": "Detailed task description",
     "platform": "jira" or "git"
-  }},
-  ...
+  }}
 ]
 
 Example Input:
@@ -82,7 +82,7 @@ Example Output (JSON):
   }}
 ]
 
-Now, read the following message and return a list of tasks as JSON:
+Now, read the following message and ALWAYS return a list of tasks as JSON.
 Content:
 \"\"\"
 {content}
@@ -90,13 +90,22 @@ Content:
 """
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_completion_tokens=400
+            temperature=0.5
         )
         output = response.choices[0].message.content.strip()
-        return eval(output)  # Safer: use `json.loads()` if model output is guaranteed JSON
+        logger.debug(f"Raw LLM response: {output}")
+        # Clean up JSON response
+        if output.startswith("```json"):
+            output = output[7:]  # Remove ```json
+        if output.endswith("```"):
+            output = output[:-3]  # Remove ```
+
+        return json.loads(output)   # Safer: use `json.loads()` if model output is guaranteed JSON
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON from LLM output: {e}")
+        return []
     except Exception as e:
         logger.error(f"Task analysis failed: {e}")
         return []
@@ -109,7 +118,7 @@ def post_task(task, mid):
 
     endpoint = "/api/v1/jiratasks/" if task["platform"] == "jira" else "/api/v1/gittasks/"
     try:
-        response = requests.post(BASE_API_URL + endpoint, json=task)
+        response = requests.post(INTERNAL_BASE_API_URL + endpoint, json=task)
         response.raise_for_status()
         logger.info(f"Posted task: {task['title']} to {task['platform']}")
         return True
@@ -121,7 +130,7 @@ def update_message_status(mid, original_msg):
     try:
         original_msg["processed"] = True
         original_msg["status"] = "processed"
-        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
+        response = requests.put(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
         response.raise_for_status()
         logger.info(f"Updated message {mid} to processed")
     except Exception as e:
