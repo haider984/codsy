@@ -19,8 +19,15 @@ celery_app = Celery(
     'tasks', # Can be any name, often the project name
     broker=broker_url,
     backend=broker_url, # Using Redis as backend too (optional)
-    # Include both email and slack listener modules
-    include=['app.listeners.email', 'app.listeners.slack', 'app.listeners.intent_classifier', 'app.listeners.slack_reply']
+    # Include all listener modules
+    include=[
+        'app.listeners.email',
+        'app.listeners.slack',
+        'app.listeners.intent_classifier',
+        'app.listeners.slack_reply',
+        'app.listeners.git_jira',
+        'app.listeners.reply_git_jira' # Add the new reply generator listener
+    ]
 )
 
 # Optional configuration settings
@@ -39,11 +46,14 @@ celery_app.conf.update(
 
 # Optional: Add routing for specific tasks to specific queues
 # This ensures our email task goes to the 'email_queue' that our workers listen to
+# Define a new queue for the git/jira tasks
 celery_app.conf.task_routes = {
     'app.listeners.email_listener.poll_inbox_task': {'queue': 'email_queue'},
     'app.listeners.slack.process_slack_message_task': {'queue': 'slack_queue'},
     'app.listeners.intent_classifier.process_unprocessed_messages_task': {'queue': 'classifier_queue'},
     'app.listeners.slack_reply.send_pending_replies_task': {'queue': 'reply_queue'},
+    'app.listeners.git_jira.process_git_jira_tasks': {'queue': 'git_jira_queue'},
+    'app.listeners.reply_git_jira.process_messages_for_reply': {'queue': 'reply_git_jira_queue'}, # Route new task
     # Add routes for other tasks if needed
 }
 
@@ -51,7 +61,7 @@ celery_app.conf.task_routes = {
 celery_app.conf.beat_schedule = {
     'poll-email-every-5-seconds': { # A descriptive name for the schedule entry
         'task': 'app.listeners.email_listener.poll_inbox_task', # The name of the task to run
-        'schedule': 5.0, # Run every 30 seconds
+        'schedule': 5.0, # Run every 5 seconds
         'options': {'queue': 'email_queue'} # Ensure scheduled task goes to the right queue
     },
     'classify-messages-every-10-seconds': { # Keep classifier less frequent due to rate limits
@@ -63,6 +73,16 @@ celery_app.conf.beat_schedule = {
         'task': 'app.listeners.slack_reply.send_pending_replies_task',
         'schedule': 5.0, # Run every 5 seconds
         'options': {'queue': 'reply_queue'} # Route scheduled task to the correct queue
+    },
+    'process-git-jira-tasks-every-10-seconds': { # Schedule for the new task
+        'task': 'app.listeners.git_jira.process_git_jira_tasks',
+        'schedule': 10.0, # Run every 10 seconds
+        'options': {'queue': 'git_jira_queue'} # Route to its dedicated queue
+    },
+    'process-messages-for-reply-every-10-seconds': { # Schedule for the new reply generator task
+        'task': 'app.listeners.reply_git_jira.process_messages_for_reply',
+        'schedule': 10.0, # Run every 10 seconds
+        'options': {'queue': 'reply_git_jira_queue'} # Route to its dedicated queue
     },
     # Add other scheduled tasks here if needed
 }
