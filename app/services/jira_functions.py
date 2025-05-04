@@ -171,25 +171,47 @@ def list_projects():
 
 
 def create_project_rest(key, name):
+    # Get credentials from environment variables
+    server = os.getenv("JIRA_SERVER")
+    email = os.getenv("JIRA_EMAIL")
+    api_token = os.getenv("JIRA_API_TOKEN")
+
+    # Validate essential Jira credentials
+    if not all([server, email, api_token]):
+        print("Critical Error: Missing required Jira environment variables (SERVER, EMAIL, API_TOKEN) for create_project_rest.")
+        return {"error": "Missing Jira credentials in environment"}
+
     project_type = "software"
-    email="agent.tom@codsy.ai"
-    server = "https://agenttom1.atlassian.net"
-    api_token="ATATT3xFfGF0Qijeqqg_DRKsBG-tU5W38A_spqKBwotCqYYMovVNUUQiePMI5a65xhUhgkP6Xo7GbfVfvQCe2Ungh4Qr0p8gpKRar5UCfGemNDb00sFdQTNcZieFHLSWK8s5TnN19JYo2PNpY14SD1KVmVpuhyc-Blx-61g7bsxW7b05FzIP7-U=5F7F4BDD"
-
-    template_key = "com.pyxis.greenhopper.jira:basic-software-development-template"
+    template_key = "com.pyxis.greenhopper.jira:basic-software-development-template" # Default template
     url = f"{server}/rest/api/3/project"
-    auth = (email, api_token)
+    auth = (email, api_token) # Use credentials from environment
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    jira = connect_jira()
+    # jira = connect_jira() # No need to connect separately if just using requests
 
-    # Get your account ID
-    response = requests.get(f"{server}/rest/api/3/myself", headers=headers, auth=auth)
-    if response.status_code >= 400:
-        print(f"Error getting account ID: {response.status_code}")
-        print(response.text)
-        return {"error": response.text}
+    # Get your account ID using the credentials from environment
+    myself_url = f"{server}/rest/api/3/myself"
+    print(f"Fetching account ID from: {myself_url}")
+    try:
+        response = requests.get(myself_url, headers=headers, auth=auth)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching account ID: {e}")
+        # Attempt to parse error response if possible
+        error_details = "Unknown error"
+        try:
+            error_details = response.json() if response else "No response"
+        except json.JSONDecodeError:
+            error_details = response.text if response else "No response text"
+        print(f"Response details: {error_details}")
+        return {"error": f"Failed to fetch account ID: {e}"}
 
     account_id = response.json().get('accountId')
+    if not account_id:
+        print("Error: Could not retrieve accountId from Jira.")
+        return {"error": "Could not retrieve accountId"}
+
+    print(f"Using leadAccountId: {account_id}")
+
     payload = {
         "key": key,
         "name": name,
@@ -198,29 +220,29 @@ def create_project_rest(key, name):
         "leadAccountId": account_id
     }
 
-    response = requests.post(url, data=json.dumps(payload), headers=headers, auth=auth)
-
-    if response.status_code >= 400:
+    print(f"Attempting to create project '{key}' ({name}) at {url}")
+    try:
+        response = requests.post(url, data=json.dumps(payload), headers=headers, auth=auth)
+        response.raise_for_status() # Raise HTTPError for bad responses
+    except requests.exceptions.RequestException as e:
+        print(f"Error creating project {key}: {e}")
+        error_details = "Unknown error"
         try:
-            error_response = response.json()
-            error_message = error_response.get("errors") or error_response.get("errorMessages") or response.text
-        except ValueError:
-            error_message = response.text
+            error_details = response.json() if response else "No response"
+        except json.JSONDecodeError:
+            error_details = response.text if response else "No response text"
+        print(f"Response details: {error_details}")
+        return {"error": f"Failed to create project: {e}", "details": error_details}
 
-        print(f"Error creating project {key}: {response.status_code}")
-        print(f"Details: {error_message}")
-        return {"error": error_message}
-
-    print(f"Successfully created project {key} -> {jira_url(jira, key)}")
+    print(f"Successfully created project {key} -> {server}/browse/{key}")
 
     project_data = {
         "name": name,
         "key": key,
         "issues": []
     }
-
     update_project_metadata(project_data)
-    return response.json()
+    return response.json() # Return the successful response JSON
 
 
 
@@ -405,18 +427,19 @@ def get_issue(issue_key):
 
 def update_issue(issue_key, summary=None, description=None):
     jira = connect_jira()
+    if not jira: return None # Handle connection failure
     updated_in_json = False
 
     try:
         # Update issue in Jira
         issue = jira.issue(issue_key)
         update_fields = {}
-        
+
         if summary:
             update_fields["summary"] = summary
         if description:
             update_fields["description"] = description
-        
+
         if update_fields:
             issue.update(**update_fields)
             print(f"Updated issue {issue_key} in Jira")
@@ -427,7 +450,7 @@ def update_issue(issue_key, summary=None, description=None):
         try:
             with open(JSON_PATH, 'r') as f:
                 projects_data = json.load(f)
-            
+
             for project in projects_data.values():
                 for issue_entry in project.get('issues', []):
                     if issue_entry['issue_key'] == issue_key:
@@ -454,6 +477,7 @@ def update_issue(issue_key, summary=None, description=None):
 
 def add_comment(issue_key, comment_text):
     jira=connect_jira()
+    if not jira: return None # Handle connection failure
     try:
         issue = jira.issue(issue_key)
         comment = jira.add_comment(issue, comment_text)
@@ -467,6 +491,7 @@ def add_comment(issue_key, comment_text):
 
 def delete_issue(issue_key):
     jira = connect_jira()
+    if not jira: return False # Handle connection failure
     try:
         # First, get the issue from Jira
         issue = jira.issue(issue_key)
@@ -475,8 +500,7 @@ def delete_issue(issue_key):
         project_key = issue_key.split('-')[0]
         
         # Load existing project metadata from the JSON file
-        with open(JSON_PATH, 'r') as f:
-            projects_data = json.load(f)
+        projects_data = load_metadata() # Use load_metadata utility
 
         # Check if the project exists in the metadata
         if project_key in projects_data:
@@ -488,8 +512,7 @@ def delete_issue(issue_key):
             projects_data[project_key]['issues'] = updated_issues
             
             # Save the updated metadata back to the JSON file
-            with open(JSON_PATH, 'w') as f:
-                json.dump(projects_data, f, indent=2)
+            save_metadata(projects_data) # Use save_metadata utility
 
             print(f"Deleted issue {issue_key} from metadata")
 
@@ -922,6 +945,7 @@ def get_issue_details(jira, issue_key):
 
 def create_release_version(project_key, version_name, description="", release_date=None):
     jira=connect_jira()
+    if not jira: return None # Handle connection failure
     try:
         version = jira.create_version(name=version_name, project=project_key, description=description, releaseDate=release_date)
         print(f"Version '{version_name}' created successfully in project {project_key} -> {jira_url(jira,project_key)}")
@@ -929,9 +953,11 @@ def create_release_version(project_key, version_name, description="", release_da
     except Exception as e:
         print(f"Failed to create version '{version_name}' in project {project_key}: {e}")
         print(f"Here is the direct link -> {jira_url(jira,project_key)}")
+        return None # Added return None on failure
 
 def assign_version_to_issue(issue_key, version_name):
     jira=connect_jira()
+    if not jira: return False # Handle connection failure
     try:
         # Fetch the issue
         issue = jira.issue(issue_key)
@@ -942,10 +968,12 @@ def assign_version_to_issue(issue_key, version_name):
         return True
     except Exception as e:
         print(f"Failed to assign version '{version_name}' to issue {issue_key}: {e}")
+        return False # Added return False
 
 
 def get_project_versions(project_key):
     jira=connect_jira()
+    if not jira: return None # Handle connection failure
     try:
         versions = jira.project_versions(project_key)
         if versions:
@@ -955,28 +983,29 @@ def get_project_versions(project_key):
         else:
             print(f"No versions found for project {project_key}.")
         print(f"Here is the direct link -> {jira_url(jira,project_key)}")
+        return versions # Return the versions list
     except Exception as e:
         print(f"Failed to fetch versions for project {project_key}: {e}")
+        return None # Added return None
 
 
 #---------------URL Func--------------
 def jira_url(jira, key):
-    #jira = connect_jira()
+    # No need to call connect_jira() here, pass the connected client
+    if not jira:
+        print("Error: Jira client not provided for URL generation.")
+        return "#" # Return a placeholder or raise error
     try:
         server = jira._options['server']
         url = f"{server}/browse/{key}"
         return url
     except Exception as e:
         print(f"Failed to generate Jira URL: {e}")
+        return "#" # Return placeholder
 
 
-
+# Remove the old __main__ block entirely or ensure no credentials remain
 if __name__ == "__main__":
-    
-    # Example usage - ensure jira object is created via connect_jira()
-    # jira = connect_jira()
-    # if jira:
-    #     # Your test calls here
-    #     # project = get_project(jira, "wildd") # Pass jira object if needed
-    #     # print(project)
-    pass # Remove hardcoded creds
+    # This block is generally not recommended for library files used by Celery/web apps
+    # Keep it empty or remove it to avoid accidental execution or credential exposure
+    pass
