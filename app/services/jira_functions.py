@@ -4,6 +4,10 @@ import requests
 import json
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables when this module is loaded
+load_dotenv()
 
 # Initialize JIRA client
 
@@ -17,18 +21,34 @@ from .metadata_utils import (
 )
 
 def connect_jira():
-    server = "https://agent1kodmate.atlassian.net"
-    email ="agent1.kodmate@gmail.com"
-    api_token="ATATT3xFfGF0baTjqaQXsD1Ge27gA3kmXRNc0-fuKfVTpt0ZbDHgVQJzV-CNEvsFMLh0wLVyzYlvmt3c1639xRO-mFBujQSD5jgXBMm5u2i6lYfTr390ILOqYHrtBGBplTqzjcZiOiQXg2GKPtXIo0WiLbMX2FTk9H1knaz-INCWlW_lPHOceTk=CC900DEE"
-    
-    if not api_token:
-        api_token = getpass.getpass("Enter your Jira API token: ")
+    # Read credentials from environment variables
+    server = os.getenv("JIRA_SERVER")
+    email = os.getenv("JIRA_EMAIL")
+    api_token = os.getenv("JIRA_API_TOKEN")
+
+    # Validate essential Jira credentials
+    if not all([server, email, api_token]):
+        print("Critical Error: JIRA_SERVER, JIRA_EMAIL, or JIRA_API_TOKEN environment variable not set in jira_functions.")
+        # Optionally raise an error instead of exiting:
+        # raise ValueError("Missing required Jira environment variables (SERVER, EMAIL, API_TOKEN)")
+        sys.exit(1) # Or handle more gracefully
+
+    # Removed getpass fallback as token should always come from env
+    # if not api_token:
+    #     api_token = getpass.getpass("Enter your Jira API token: ")
+
     try:
-        jira = JIRA(server=server, basic_auth=(email, api_token))
-        return jira
+        print(f"Connecting to Jira server: {server} with email: {email}") # Log connection attempt
+        jira_client = JIRA(server=server, basic_auth=(email, api_token))
+        # Test connection (optional but recommended)
+        jira_client.myself()
+        print("Successfully connected to Jira.")
+        return jira_client
     except Exception as e:
         print(f"Failed to connect to Jira: {e}")
-        sys.exit(1)
+        # Optionally raise the exception or handle it
+        # raise ConnectionError(f"Failed to connect to Jira: {e}") from e
+        sys.exit(1) # Exit if connection fails
 
 
 def get_project(project_key):
@@ -413,7 +433,7 @@ def update_issue(issue_key, summary=None, description=None):
                     if issue_entry['issue_key'] == issue_key:
                         if summary:
                             issue_entry['summary'] = summary
-                        # We’re not storing description in JSON, but you could extend here
+                        # We're not storing description in JSON, but you could extend here
                         updated_in_json = True
                         break
 
@@ -953,55 +973,10 @@ def jira_url(jira, key):
 
 if __name__ == "__main__":
     
-    server = "https://agent1kodmate.atlassian.net"
-    email ="agent1.kodmate@gmail.com"
-    api_token="ATATT3xFfGF0baTjqaQXsD1Ge27gA3kmXRNc0-fuKfVTpt0ZbDHgVQJzV-CNEvsFMLh0wLVyzYlvmt3c1639xRO-mFBujQSD5jgXBMm5u2i6lYfTr390ILOqYHrtBGBplTqzjcZiOiQXg2GKPtXIo0WiLbMX2FTk9H1knaz-INCWlW_lPHOceTk=CC900DEE"
-    #jira = connect_jira(server,email,api_token)
-
-    # project = get_project("wildd")
-    # print(project)
-    # response = list_projects()
-    # print(response)
-    #response= assign_issue(jira, "sanan.khan", "ABC-4")
-    #get_issues_in_project(jira,"ABC")
-    #assign_version_to_issue(jira, "ABC-2", "hello3")
-    #delete_comment(jira,"ABC-4","good")
-
-    #list_projects(jira)
-    #get_comments(jira,"ABC-1")
-    #get_issue(jira,"ABC-1")
-    #get_issue_details(jira, "ABC-1")
-    #get_issue_history(jira, "ABC-1")
-    #get_issue_status(jira, "ABC-1")
-    #get_issue_transitions(jira, "ABC-1")
-    #get_issues_in_project(jira, "ABC")
-    #get_issues_sorted_by_due_date(jira, "ABC")
-    #get_project(jira, "ABC")
-    #get_project_versions(jira, "ABC")
-
-    #move_issue_to_project(jira, "ABC-6", "DEVTRACK")
-    #create_issue(jira, "ABC", "NEW SUMMARY", "new description")
-    #create_project_rest(server,email,api_token,"ONE","ONE")
-    #create_release_version(jira, "ONE", "two","NO DESCRIPTION")
-    #create_subtask(jira, "ABC-1", "SUBTASK-SUMMARY","SUBTASK DESCRIPTION")
-
-    #delete_comment(jira,"ABC-1", "GOOD")
-    #delete_issue(jira, "ABC-4")
-    #delete_project(jira, "ONE")
-   
-
-    #transition_issue(jira, "ABC-1", "Done")
-
-    #set_due_date(jira, "ABC-7", "2025-05-05")
-    # response = search_issues_by_assignee(jira, "sanan.khan")
-    # print(response)
-    #set_priority(jira,"ABC-7","High")
-    #add_comment(jira, "ABC-7", "Testing comment")
-    #add_label_to_issue(jira, "ABC-7", "need_word")
-    #add_attachment(jira, "ABC-7", "requirements.txt")
-    #remove_label(jira, "ABC-7", "need_word")
-
-    #update_issue(jira, "ABC-7", "UPDATED SUMMARY")
-    #update_project(jira, "ABC", "wildd")
-
-    #assign_version_to_issue(jira, "ABC-7", "hello2")
+    # Example usage - ensure jira object is created via connect_jira()
+    # jira = connect_jira()
+    # if jira:
+    #     # Your test calls here
+    #     # project = get_project(jira, "wildd") # Pass jira object if needed
+    #     # print(project)
+    pass # Remove hardcoded creds

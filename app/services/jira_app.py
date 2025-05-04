@@ -29,16 +29,30 @@ from .metadata_utils import (
 
 # Load environment
 load_dotenv()
-GROQ_API_KEY="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"
-client = Groq(api_key=GROQ_API_KEY)
 
-# Jira credentials
-JIRA_SERVER = "https://agent1kodmate.atlassian.net"
-JIRA_EMAIL = "agent1.kodmate@gmail.com"
-JIRA_API_TOKEN ="ATATT3xFfGF0baTjqaQXsD1Ge27gA3kmXRNc0-fuKfVTpt0ZbDHgVQJzV-CNEvsFMLh0wLVyzYlvmt3c1639xRO-mFBujQSD5jgXBMm5u2i6lYfTr390ILOqYHrtBGBplTqzjcZiOiQXg2GKPtXIo0WiLbMX2FTk9H1knaz-INCWlW_lPHOceTk=CC900DEE"
-    
-# Initialize Jira client
-jira = connect_jira()
+# Get API keys from environment variables
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    print("Warning: GROQ_API_KEY environment variable not set.") # Or raise an error
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None # Handle missing key
+
+# Get Jira credentials from environment variables
+JIRA_SERVER = os.getenv("JIRA_SERVER")
+JIRA_EMAIL = os.getenv("JIRA_EMAIL")
+JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
+
+# Validate essential Jira credentials
+if not all([JIRA_SERVER, JIRA_EMAIL, JIRA_API_TOKEN]):
+    # Consider raising an error or logging a critical failure
+    print("Critical Error: JIRA_SERVER, JIRA_EMAIL, or JIRA_API_TOKEN environment variable not set.")
+    jira = None # Prevent client initialization if creds are missing
+else:
+    # Initialize Jira client (ensure connect_jira uses these vars or receives them)
+    # Assuming connect_jira is modified to use these env vars or accept them as args
+    jira = connect_jira()
+
+# Ensure client and jira are initialized before using them
+# Add checks later in the code where client or jira are used, e.g., if client: ...
 
 function_descriptions = {
     "list_projects": "Lists all available Jira projects",
