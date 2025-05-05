@@ -70,7 +70,6 @@ function_descriptions = {
     "sync_branch_with_main": "Synchronizes a branch with the main branch. Requires repository name and branch name.",
     "create_workflow": "Creates a GitHub Actions workflow. Requires repository name and optional filename.",
     "rename_repository": "Renames a GitHub repository. Requires old name and new name.",
-    "generate_code": "Generates code based on a given prompt using Groq LLM.",
     "update_code": "Updates existing code based on natural language instructions.",
     "update_existing_code": "Updates code in a repository file based on instructions. Requires repository name, file path, and instruction.",
     "generate_and_push_code": "Generates code from a prompt and commits it to a repository. Requires repository name, filename, and prompt.",
@@ -107,7 +106,6 @@ param_requirements = {
     "sync_branch_with_main": ["repo_name", "branch_name"],
     "create_workflow": ["repo_name", "filename"],
     "rename_repository": ["old_name", "new_name"],
-    "generate_code": ["request_prompt"],
     "update_code": ["existing_code", "instruction"],
     "update_existing_code": ["repo_name", "file_path", "instruction"],
     "generate_and_push_code": ["repo_name", "filename", "prompt"],
@@ -117,7 +115,7 @@ param_requirements = {
     "rename_branch": ["repo_name", "old_branch", "new_branch"],
     "duplicate_repo": ["source_repo", "new_repo_name"],
     "restore_repo": ["repo_name"],
-     "delete_and_backup_repo": ["repo_name"],
+    "delete_and_backup_repo": ["repo_name"],
 
 }
 

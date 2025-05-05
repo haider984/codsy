@@ -107,44 +107,40 @@ def list_projects():
 
 
 def create_project_rest(key, name):
-    # Get credentials from environment variables
+    import requests, json, os
+
     server = os.getenv("JIRA_SERVER")
     email = os.getenv("JIRA_EMAIL")
     api_token = os.getenv("JIRA_API_TOKEN")
 
-    # Validate essential Jira credentials
     if not all([server, email, api_token]):
-        print("Critical Error: Missing required Jira environment variables (SERVER, EMAIL, API_TOKEN) for create_project_rest.")
-        return {"error": "Missing Jira credentials in environment"}
+        raise ValueError("Missing Jira credentials in environment")
 
-    project_type = os.getenv("PROJECT_TYPE")
-    template_key = os.getenv("TEMPLATE_KEY") # Use environment variable for template key
+    project_type = os.getenv("PROJECT_TYPE", "software")
+    template_key = os.getenv("TEMPLATE_KEY", "com.pyxis.greenhopper.jira:gh-simplified-scrum-classic")
+    # 🐛 Debug print to see what values you're working with
+    print(f"Using projectTypeKey: {project_type}, templateKey: {template_key}")
     url = f"{server}/rest/api/3/project"
-    auth = (email, api_token) # Use credentials from environment
+    auth = (email, api_token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    # jira = connect_jira() # No need to connect separately if just using requests
 
-    # Get your account ID using the credentials from environment
+    # Get your account ID
     myself_url = f"{server}/rest/api/3/myself"
     print(f"Fetching account ID from: {myself_url}")
     try:
         response = requests.get(myself_url, headers=headers, auth=auth)
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching account ID: {e}")
-        # Attempt to parse error response if possible
         error_details = "Unknown error"
         try:
             error_details = response.json() if response else "No response"
-        except json.JSONDecodeError:
+        except Exception:
             error_details = response.text if response else "No response text"
-        print(f"Response details: {error_details}")
-        return {"error": f"Failed to fetch account ID: {e}"}
+        raise RuntimeError(f"Failed to fetch account ID: {e} | Details: {error_details}")
 
     account_id = response.json().get('accountId')
     if not account_id:
-        print("Error: Could not retrieve accountId from Jira.")
-        return {"error": "Could not retrieve accountId"}
+        raise RuntimeError("Could not retrieve accountId from Jira response.")
 
     print(f"Using leadAccountId: {account_id}")
 
@@ -159,16 +155,14 @@ def create_project_rest(key, name):
     print(f"Attempting to create project '{key}' ({name}) at {url}")
     try:
         response = requests.post(url, data=json.dumps(payload), headers=headers, auth=auth)
-        response.raise_for_status() # Raise HTTPError for bad responses
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Error creating project {key}: {e}")
         error_details = "Unknown error"
         try:
             error_details = response.json() if response else "No response"
-        except json.JSONDecodeError:
+        except Exception:
             error_details = response.text if response else "No response text"
-        print(f"Response details: {error_details}")
-        return {"error": f"Failed to create project: {e}", "details": error_details}
+        raise RuntimeError(f"Failed to create project: {e} | Details: {error_details}")
 
     print(f"Successfully created project {key} -> {server}/browse/{key}")
 
@@ -178,7 +172,8 @@ def create_project_rest(key, name):
         "issues": []
     }
     update_project_metadata(project_data)
-    return response.json() # Return the successful response JSON
+    return response.json()
+
 
 
 
@@ -320,7 +315,7 @@ def create_issue(project_key, summary, description):
             issuetype= "Task"
         )
         print(f"Created issue: {new_issue.key} -> {jira_url(jira,new_issue.key)}")
-        store_issue_metadata(project_key, new_issue.key, summary)
+        store_issue_metadata(project_key, new_issue.key, summary, description)
         return new_issue
     except Exception as e:
         print(f"Failed to create issue: {e}")

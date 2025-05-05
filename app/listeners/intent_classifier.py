@@ -56,38 +56,61 @@ else:
 # --- PROMPT TEMPLATES ---
 classification_prompt = PromptTemplate(
     template="""
-    You are an AI email classification assistant.
-    Classify the **email content** (HTML stripped) into exactly one of the following categories:
-
-    "meeting"     — a meeting invitation or link
-    **"transcript"** — A transcript of a meeting or call, discussing GitHub or Jira tasks. IMPORTANT: Typically includes spoken dialogue or summaries.
-    - *Dialogue Example*:
-        - John: "Hi, Guyz, How are you?"
-        - Sarah: "I am good, thanks."
-        - Mike: "I am great. What about you?"
-        - John: "I am good as well."
-        - John: "ok guyz, We need to streamline GitHub and Jira workflows."
-        - Sarah: "I'll create the repo and share it."
-        - Mike: "Let's use the automation script John built."
-    - *Summary Example*: "The meeting covered GitHub repo setup and automation testing with a custom script."
-
-    **"instructions"** — Clear action items or steps related to GitHub or Jira, without being a transcript.
-    - *Example*: 
-        - *GitHub Examples*:
-            - "Please create a new GitHub repository for XYZ project"
-            - "Update index.html in the Dev repository"
-            - "Add dashboard component to the main branch"
-    
-    - *Jira Examples*:
-            - "Create a new Jira board for the XYZ project"
-            - "Add a ticket for the dashboard implementation"
-            - "Update the story points on DEV-123"
-
-    - *Combined Tasks*:
-            - "Setup GitHub repo for XYZ and create matching Jira board"
-            - "After merging PR, update the Jira ticket status"
-
-    **"greeting"** — everything else (e.g. casual messages, greetings, or anything that doesn't clearly fit above)
+    You are an AI email classification assistant. Classify the email content (HTML stripped) into EXACTLY ONE of the following categories:
+    "meeting" — Any content primarily focused on organizing or referencing a meeting:
+        - Meeting invitations with date/time details
+        - Messages containing video conferencing links (Zoom, Teams, Google Meet, etc.)
+        - Discussions about scheduling or rescheduling meetings
+        - References to upcoming meetings with clear intent to organize attendance
+    "transcript" — Content that captures actual conversation dialogue, especially about GitHub or Jira:
+        MUST have a dialogue format with named speakers followed by their statements
+        Often contains back-and-forth exchanges between multiple participants
+        May include technical discussions about GitHub repositories or Jira tickets
+        Can include meeting summaries that explicitly reference spoken exchanges
+        Dialogue Examples:
+            John: "Hi, Guyz, How are you?"
+            Sarah: "I am good, thanks."
+            Mike: "I am great. What about you?"
+            John: "I am good as well."
+            John: "ok guyz, We need to streamline GitHub and Jira workflows."
+            Sarah: "I'll create the repo and share it."
+            Mike: "Let's use the automation script John built."
+        Summary Example: "The meeting covered GitHub repo setup and automation testing with a custom script."
+    "instructions" — Clear action items or task directives related to GitHub or Jira:
+        Direct commands or requests to perform specific technical actions
+        NOT in a transcript/dialogue format
+        Focus on the tasks themselves rather than discussions about the tasks
+        GitHub Examples:
+            "Please create a new GitHub repository for XYZ project"
+            "Update index.html in the Dev repository"
+            "Add dashboard component to the main branch"
+            "List git repos"
+        Jira Examples:
+            "Create a new Jira board for the XYZ project"
+            "Add a ticket for the dashboard implementation"
+            "Update the story points on DEV-123"
+            "List Jira projects"
+        Combined Tasks:
+            "Setup GitHub repo for XYZ and create matching Jira board"
+            "After merging PR, update the Jira ticket status"
+    "greeting" — Any content that doesn't clearly fit into the above categories:
+        Simple greetings without technical instructions ("Hi", "Hello", "Good morning")
+        General questions about wellbeing ("How are you?", "What's going on?")
+        Casual conversations without specific tasks or meeting details
+        Brief acknowledgments or thank you messages
+        Any content that lacks the specific characteristics of the other three categories
+    CLASSIFICATION DECISION PROCESS:
+        First, determine if the content explicitly mentions scheduling a meeting or contains meeting links → "meeting"
+        If not, check if it follows a dialogue format with named speakers or directly summarizes a conversation → "transcript"
+        If not, check if it contains specific GitHub/Jira tasks or technical instructions → "instructions"
+        If none of the above criteria are met → "greeting"
+    IMPORTANT RULES:
+        Always select EXACTLY ONE category that best represents the primary purpose of the message
+        For mixed content, prioritize based on the main intent (e.g., a message with both a greeting and GitHub instructions should be classified as "instructions")
+        Context matters - look at the overall structure and intent of the message
+        The presence of named speakers with quotations strongly indicates "transcript"
+        Simple mentions of GitHub/Jira without specific tasks do not qualify as "instructions"
+        When in doubt between "greeting" and another category, choose the more specific category
 
 
     Email content:

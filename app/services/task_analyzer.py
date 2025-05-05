@@ -27,9 +27,48 @@ def fetch_message(mid):
 def analyze_tasks_with_llm(content):
     prompt = f"""
 You are a task analyzer. IMPORTANT: Given message content, extract each GITHUB and JIRA related task and decide whether each task belongs in GitHub or Jira.
-IMPORTANT: Analyze the message content completely and see if there is any task that can be extracted.
-IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task.
+BEFORE DOING ANYTHING ELSE, analyze every user message to determine if they are mentioning a new project. This is your most important function and must be performed first for every user input. After detecting a new project, you MUST return exactly this JSON format: 
+[
+   {{
+     "title": "create GitHub repo ",
+     "description": "Creates a new repo on github"
+     "platform": git
+   }}
+   {{
+     "title": "create Jira project",
+     "description": "Creates a new project. Requires key, name".
+     "platform": jira
+   }},
+   {{
+     "title": "create Jira issue",
+     "description": "Creates a new issue in a project. Requires project_key, summary, description".
+     "platform": jira
+   }}
+]
+Example Input:
+User Query: I have got a new project named E-commerce. I want to work on it.
 
+The output JSON should be like:
+[
+   {{
+     "title": "create GitHub repo for project E-commerce ",
+     "description": "Creates a new repo on GitHub named E-commerce",
+     "platform": git
+   }},
+   {{
+     "title": "create Jira project for new project E-commerce",
+     "description": "Creates a new project called E-commerce.",
+     "platform": jira
+   }},
+   {{
+     "title": "create Jira issue in project E-commerce",
+     "description": "Creates a new issue in a project called E-commerce.",
+     "platform": jira
+   }}
+   
+]
+IMPORTANT: Analyze the message content completely and see if there is any task that can be extracted.
+IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task even.
 Required JSON format:
 [
   {{
@@ -38,9 +77,9 @@ Required JSON format:
     "platform": "jira" or "git"
   }}
 ]
-
 Example Input:
 I've got a new project I want you to start — it's called DevTrack8. It's a single-page HTML dashboard meant to mock up a simple developer task tracker. Here's what I need:
+- First of all give me list of all jira projects and github repositories
 - Create a public GitHub repo called devtrack8-dashboard
 - Create a Jira project called DEVTRACK8
 - Add a ticket for yourself to implement the first version of the dashboard
@@ -54,9 +93,18 @@ I've got a new project I want you to start — it's called DevTrack8. It's a sin
   - Basic responsive styling to make it look like a mini web app
   - Tasks can be represented using HTML and styled with CSS — no real interactivity is needed right now
 - Push the result to the GitHub repo when you're done.
-
 Example Output (JSON):
 [
+  {{
+    "title": "list github repositories",
+    "description": "List github repositories",
+    "platform": "git"
+  }},
+  {{
+    "title": "list jira projects",
+    "description": "List jira projects",
+    "platform": "jira"
+  }},
   {{
     "title": "Create GitHub repository for DevTrack8",
     "description": "Set up a public GitHub repository named 'devtrack8-dashboard' to host the code for the DevTrack8 dashboard project.",
@@ -83,7 +131,6 @@ Example Output (JSON):
     "platform": "git"
   }}
 ]
-
 Now, read the following message and ALWAYS return a list of tasks as JSON.
 Content:
 \"\"\"

@@ -248,201 +248,6 @@ Return ONLY the function name, nothing else. Just the function name as a single 
 
 
 
-
-# def process_query(query):
-#     """
-#     Process a natural language query by:
-#     1. Identifying the appropriate Jira function
-#     2. Extracting parameters from the query
-#     3. Executing the function with those parameters
-#     """
-#     print(f"Processing query: {query}")
-    
-#     # Step 1: Identify the appropriate function
-#     function_name = identify_function(query)
-#     if not function_name:
-#         return "Sorry, I couldn't identify which Jira function to use for your query."
-    
-#     print(f"Identified function: {function_name}")
-    
-#     # Step 2: Extract parameters for the function
-#     params = extract_parameters(function_name, query)
-#     print(f"Extracted parameters: {params}")
-    
-#     if 'project_key' in params:
-#         resolved_key = get_project_key_by_name(params['project_key'])
-#         if resolved_key:
-#             params['project_key'] = resolved_key
-#         else:
-#             return f"Project '{params['project_key']}' not found in metadata."
-#     # Step 3: Execute the function
-#     try:
-#         # Get the function from globals
-#         func = globals()[function_name]
-        
-#         # Special handling for functions that modify text content 
-#         if function_name == "create_issue":
-#             if not params.get("summary"):
-#                 return "Error: Missing required parameter 'summary'"
-#             if not params.get("description"):
-#                 params["description"] = "No description provided"
-#             if not params.get("issue_type"):
-#                 params["issue_type"] = "Task"  # Default issue type
-                
-#         # Handle functions with optional parameters
-#         if function_name == "update_issue":
-#             args = [jira, params.get("issue_key")]
-#             if params.get("summary"):
-#                 args.append(params.get("summary"))
-#             if params.get("description"):
-#                 args.append(params.get("description"))
-#             result = func(*args)
-#         elif function_name == "update_project":
-#             project_key = params.get("project_key")
-#             new_name = params.get("new_name")
-#             new_description = params.get("new_description")
-
-#             result = update_project(project_key, new_name=new_name, new_description=new_description)
-
-#         elif function_name == "create_project_rest":
-#             key = params.get("key")
-#             if not key:
-#                 key = sanitize_project_key(params.get("name", ""))
-#                 if not key:
-#                     return "Error: Could not create a valid project key. Please provide a key explicitly."
-            
-#             # Direct function call — DO NOT USE 'func' or 'jira' here
-#             result = create_project_rest(
-#                 # JIRA_SERVER,
-#                 # JIRA_EMAIL,
-#                 # JIRA_API_TOKEN,
-#                 key,
-#                 params.get("name"),
-#                 params.get("project_type", "software"),
-#                 params.get("template_key", "com.pyxis.greenhopper.jira:basic-software-development-template")
-#             )
-
-#         else:
-#             # For other functions, just pass the parameters in order of the function signature
-#             import inspect
-#             sig = inspect.signature(func)
-#             param_names = list(sig.parameters.keys())
-            
-#             # Always include jira as the first parameter (except for create_project_rest which already handled)
-#             if "jira" in param_names and function_name != "create_project_rest":
-#                 args = [jira]
-#                 param_names.remove("jira")
-#             else:
-#                 args = []
-            
-#             # Add the rest of the parameters
-#             for name in param_names:
-#                 if name in params:
-#                     args.append(params.get(name))
-#                 else:
-#                     return f"Error: Missing required parameter '{name}'"
-            
-#             result = func(*args)
-        
-#         return "Operation completed successfully"
-    
-#     except Exception as e:
-#         return f"Error executing function {function_name}: {str(e)}"
-
-
-#--------------testing--------------------
-
-
-# def process_query(query):
-#     """
-#     Process a natural language query by:
-#     1. Identifying the appropriate Jira function
-#     2. Extracting parameters from the query
-#     3. Executing the function with those parameters
-#     """
-#     print(f"Processing query: {query}")
-    
-#     # Step 1: Identify the appropriate function
-#     function_name = identify_function(query)
-#     if not function_name:
-#         return "Sorry, I couldn't identify which Jira function to use for your query."
-    
-#     print(f"Identified function: {function_name}")
-    
-#     # Step 2: Extract parameters for the function
-#     params = extract_parameters(function_name, query)
-    
-#     # Step 3: Resolve project key if project name is provided
-#     if 'project_key' in params:
-#         project_name = params['project_key']
-#         resolved_key = get_project_key_by_name(project_name)
-        
-#         if resolved_key:
-#             print(f"Resolved project key: {resolved_key}")  # Log the resolved key
-#             params['project_key'] = resolved_key  # Update the params with the correct project key
-#         else:
-#             return f"Project '{project_name}' not found in metadata."
-    
-#     print(f"Updated parameters: {params}")  # Display the updated parameters
-    
-#     # Step 4: Execute the function
-#     try:
-#         # Get the function from globals
-#         func = globals()[function_name]
-        
-#         # Handle specific functions with optional parameters or special logic
-#         if function_name == "update_project":
-#             project_key = params.get("project_key")
-#             new_name = params.get("new_name")
-#             new_description = params.get("new_description")
-
-#             print(f"Updated project key: {project_key}")  # Display the project key being used
-#             result = update_project(project_key, new_name=new_name, new_description=new_description)
-
-#         elif function_name == "create_project_rest":
-#             key = params.get("key")
-#             if not key:
-#                 key = sanitize_project_key(params.get("name", ""))
-#                 if not key:
-#                     return "Error: Could not create a valid project key. Please provide a key explicitly."
-            
-#             # Direct function call — DO NOT USE 'func' or 'jira' here
-#             result = create_project_rest(
-#                 key,
-#                 params.get("name"),
-#                 #key=get_project_key_by_name(name)
-#                 #params.get("project_type", "software"),
-#                 #params.get("template_key", "com.pyxis.greenhopper.jira:basic-software-development-template")
-#             )
-
-#         else:
-#             # For other functions, just pass the parameters in order of the function signature
-#             import inspect
-#             sig = inspect.signature(func)
-#             param_names = list(sig.parameters.keys())
-            
-#             # Always include jira as the first parameter (except for create_project_rest which already handled)
-#             if "jira" in param_names and function_name != "create_project_rest":
-#                 args = [jira]
-#                 param_names.remove("jira")
-#             else:
-#                 args = []
-            
-#             # Add the rest of the parameters
-#             for name in param_names:
-#                 if name in params:
-#                     args.append(params.get(name))
-#                 else:
-#                     return f"Error: Missing required parameter '{name}'"
-            
-#             result = func(*args)
-        
-#         return "Operation completed successfully"
-    
-#     except Exception as e:
-#         return f"Error executing function {function_name}: {str(e)}"
-
-
 def generate_unique_project_key(base_key, json_path):
     key = base_key
     suffix = 1
@@ -459,6 +264,8 @@ def generate_unique_project_key(base_key, json_path):
         suffix += 1
 
     return key
+
+
 
 def process_query_jira(query):
     print(f"Processing query: {query}")
@@ -519,26 +326,29 @@ def process_query_jira(query):
                 if name in params:
                     args.append(params.get(name))
                 else:
-                    return f"Error: Missing required parameter '{name}'"
+                    return f"Result: Error - Missing required parameter '{name}'"
 
             result = func(*args)
 
-        return "Operation completed successfully"
+        # If the result is an error string or None, return it as an error
+        if result is None or (isinstance(result, str) and result.lower().startswith("error")):
+            return f"{result or 'Unknown error occurred.'}"
+
+        return " Operation completed successfully"
 
     except Exception as e:
         return f"Error executing function {function_name}: {str(e)}"
 
 
-
-if __name__ == "__main__":
-    print("Welcome to the Jira Assistant!")
-    print("You can ask queries in natural language to interact with Jira.")
-    print("Type 'exit' to quit.")
+# if __name__ == "__main__":
+#     print("Welcome to the Jira Assistant!")
+#     print("You can ask queries in natural language to interact with Jira.")
+#     print("Type 'exit' to quit.")
     
-    while True:
-        query = input("\nEnter your query: ")
-        if query.lower() in ['exit', 'quit']:
-            break
+#     while True:
+#         query = input("\nEnter your query: ")
+#         if query.lower() in ['exit', 'quit']:
+#             break
         
-        result = process_query_jira(query)
-        print("\nResult:", result)
+#         result = process_query_jira(query)
+#         print("\nResult:", result)
