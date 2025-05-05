@@ -44,7 +44,7 @@ from .github_functions import (
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 # Function descriptions for GitHub functions available in github_actions.py
