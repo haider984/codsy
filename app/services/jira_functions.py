@@ -52,6 +52,7 @@ def connect_jira():
 
 
 def get_project(project_key):
+    server = os.getenv("JIRA_SERVER")
     
     # First, try to load from JSON
     try:
@@ -64,7 +65,7 @@ def get_project(project_key):
     if project_key in projects_data:
         project = projects_data[project_key]
         print(f"(From JSON) Project: {project['key']} - {project['name']}")
-        print(f"Here is the direct link -> https://agent1kodmate.atlassian.net/browse/{project['key']}")
+        print(f"Here is the direct link -> {server}/browse/{project['key']}")
         return project
     
     # If not in JSON, fallback to Jira API
@@ -80,6 +81,7 @@ def get_project(project_key):
 
 
 def list_projects():
+    server = os.getenv("JIRA_SERVER")
     
     try:
         with open(JSON_PATH, 'r') as f:
@@ -96,7 +98,7 @@ def list_projects():
         project_info = {
             "key": project.get("key"),
             "name": project.get("name"),
-            "url": f"https://agent1kodmate.atlassian.net/browse/{key}"
+            "url": f"{server}/browse/{key}"
         }
         data.append(project_info)
         print(f"Project-key: {project_info['key']} | Name: {project_info['name']} | URL: {project_info['url']}")
@@ -115,8 +117,8 @@ def create_project_rest(key, name):
         print("Critical Error: Missing required Jira environment variables (SERVER, EMAIL, API_TOKEN) for create_project_rest.")
         return {"error": "Missing Jira credentials in environment"}
 
-    project_type = "software"
-    template_key = "com.pyxis.greenhopper.jira:basic-software-development-template" # Default template
+    project_type = os.getenv("PROJECT_TYPE")
+    template_key = os.getenv("TEMPLATE_KEY") # Use environment variable for template key
     url = f"{server}/rest/api/3/project"
     auth = (email, api_token) # Use credentials from environment
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
