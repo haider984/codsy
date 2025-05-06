@@ -8,7 +8,7 @@ from groq import Groq
 # Load environment variables
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_API_URL = os.getenv("BASE_API_URL", "http://localhost:8000")
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
 logging.basicConfig(

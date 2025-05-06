@@ -9,7 +9,7 @@ import json
 # Load environment
 load_dotenv()
 openai_api_key = os.getenv("TASK_ANALYZER_OPENAI_API_KEY")
-BASE_API_URL = os.getenv("BASE_API_URL", "http://localhost:8000")
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 client = OpenAI(api_key=openai_api_key)
 logger = logging.getLogger("TaskAnalyzer")

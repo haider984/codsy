@@ -24,7 +24,7 @@ celery_app = Celery(
         'app.listeners.email',
         'app.listeners.slack',
         'app.listeners.intent_classifier',
-        'app.listeners.slack_reply',
+        'app.listeners.reply',
         'app.listeners.git_jira',
         'app.listeners.reply_git_jira' # Add the new reply generator listener
     ]
@@ -51,7 +51,7 @@ celery_app.conf.task_routes = {
     'app.listeners.email.poll_inbox_task': {'queue': 'email_queue'},
     'app.listeners.slack.process_slack_message_task': {'queue': 'slack_queue'},
     'app.listeners.intent_classifier.process_unprocessed_messages_task': {'queue': 'classifier_queue'},
-    'app.listeners.slack_reply.send_pending_replies_task': {'queue': 'reply_queue'},
+    'app.listeners.reply.send_pending_replies_task': {'queue': 'reply_queue'},
     'app.listeners.git_jira.process_git_jira_tasks': {'queue': 'git_jira_queue'},
     'app.listeners.reply_git_jira.process_messages_for_reply': {'queue': 'reply_git_jira_queue'}, # Route new task
     # Add routes for other tasks if needed
@@ -70,7 +70,7 @@ celery_app.conf.beat_schedule = {
         'options': {'queue': 'classifier_queue'}
     },
     'send-replies-every-5-seconds': { # Descriptive name
-        'task': 'app.listeners.slack_reply.send_pending_replies_task',
+        'task': 'app.listeners.reply.send_pending_replies_task',
         'schedule': 5.0, # Run every 5 seconds
         'options': {'queue': 'reply_queue'} # Route scheduled task to the correct queue
     },
