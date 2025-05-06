@@ -79,9 +79,9 @@ celery_app.conf.beat_schedule = {
         'schedule': 10.0, # Run every 10 seconds
         'options': {'queue': 'git_jira_queue'} # Route to its dedicated queue
     },
-    'process-messages-for-reply-every-10-seconds': { # Schedule for the new reply generator task
+    'process-messages-for-reply-every-5-seconds': { # Schedule for the new reply generator task
         'task': 'app.listeners.reply_git_jira.process_messages_for_reply',
-        'schedule': 10.0, # Run every 10 seconds
+        'schedule': 5.0, # Run every 10 seconds
         'options': {'queue': 'reply_git_jira_queue'} # Route to its dedicated queue
     },
     # Add other scheduled tasks here if needed
