@@ -167,22 +167,21 @@ services:
       - web
     restart: always
 
-  # # ---- REPLY GIT/JIRA WORKER SERVICE ----
-  # reply_git_jira_worker: # New worker service for the reply generation queue
-  #   build: .
-  #   # Command to start celery worker listening ONLY to the reply_git_jira queue
-  #   command: celery -A app.celery_app worker --loglevel=info -Q reply_git_jira_queue
-  #   volumes:
-  #     - ./app:/app/app # Mount code same as web
-  #   env_file:
-  #     - .env         # Load necessary environment variables (GROQ_API_KEY etc.)
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
-  #     # Worker needs internal API URL to call back to 'web' service
-  #     - INTERNAL_BASE_API_URL=http://web:8000
-  #     # Explicitly add GROQ_API_KEY if needed and not in .env
-  #     # - GROQ_API_KEY=${GROQ_API_KEY}
-  #   depends_on:
-  #     - redis        # Depends on the message broker
-  #     - web          # Depends on the API service being available
-  #   restart: always  # Restart worker if it fails
+  # ---- REPLY GIT/JIRA WORKER SERVICE ----
+  reply_git_jira_worker: # New worker service for the reply generation queue
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info -Q reply_git_jira_queue
+    volumes:
+      - ./app:/app/app # Mount code same as web
+    env_file:
+      - .env         # Load necessary environment variables (GROQ_API_KEY etc.)
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
+      # Worker needs internal API URL to call back to 'web' service
+      - INTERNAL_BASE_API_URL=http://web:8000
+      # Explicitly add GROQ_API_KEY if needed
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - redis        # Depends on the message broker
+      - web          # Depends on the API service being available
+    restart: always  # Restart worker if it fails

@@ -2,55 +2,44 @@ import os
 import time
 import logging
 import requests
-import json # Import json for potential use
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
-from ..celery_app import celery_app # Import the Celery app instance
+from app.celery_app import celery_app  # Import Celery app
 
 # Load environment variables
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# Use INTERNAL_BASE_API_URL for worker-to-web communication inside Docker
-BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000")
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-# Use __name__ which is standard practice for module loggers
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MidMessageProcessor")
 
-# Initialize Groq client - consider initializing inside task if needed
-# or ensure thread/process safety if global
-try:
-    client = Groq(api_key=GROQ_API_KEY)
-    logger.info("Groq client initialized successfully at module level.")
-except Exception as e:
-    logger.error(f"Failed to initialize Groq client at module level: {e}")
-    client = None # Set to None to handle potential init failure
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
+
 
 class MidMessageProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
+        logger.info(f"MidMessageProcessor initialized with API URL: {BASE_API_URL}")
 
     def fetch_messages_to_process(self):
-        """Fetch messages with status 'processed'."""
         try:
-            # Use the internal API URL
-            url = f"{BASE_API_URL}/api/v1/messages/by_status/?status=processed"
-            response = requests.get(url)
+            response = requests.get(f"{BASE_API_URL}/api/v1/messages/by_status/?status=processed")
             response.raise_for_status()
             messages = response.json()
             logger.info(f"Fetched {len(messages)} messages with 'processed' status.")
             return messages
         except Exception as e:
-            logger.error(f"Error fetching messages with status 'processed': {e}")
+            logger.error(f"Error fetching messages to process: {e}")
             return []
 
     def fetch_git_tasks_for_mid(self, mid):
-        """Fetch Git tasks associated with a message ID."""
         try:
             url = f"{BASE_API_URL}/api/v1/gittasks/by_message/{mid}"
             response = requests.get(url)
@@ -129,12 +118,11 @@ class MidMessageProcessor:
                 max_tokens=1024
             )
             response = completion.choices[0].message.content.strip()
-            logger.info(f"Generated summary for message {mid}.")
-            logger.debug(f"Summary for MID {mid}: {response}")
+            logger.info(f"Generated summary for message {mid}: {response[:100]}...")
             return response
         except Exception as e:
             logger.error(f"Error generating summary with LLM for message {mid}: {e}")
-            return "An error occurred while generating the final response summary."
+            return "An error occurred while generating a response for your message."
 
     def update_message_with_reply(self, mid, reply):
         try:
@@ -157,9 +145,11 @@ class MidMessageProcessor:
 
     def process_messages(self):
         messages = self.fetch_messages_to_process()
+        processed_count = 0
+        
         if not messages:
             logger.info("No messages to process")
-            return
+            return f"Processed {processed_count} messages"
 
         for message in messages:
             mid = message.get("mid")
@@ -184,6 +174,7 @@ class MidMessageProcessor:
                 success = self.update_message_with_reply(mid, reply)
                 if success:
                     logger.info(f"Successfully processed message {mid}")
+                    processed_count += 1
                 else:
                     logger.error(f"Failed to update message {mid}")
 
@@ -192,19 +183,22 @@ class MidMessageProcessor:
             except Exception as e:
                 logger.error(f"Error processing message {mid}: {e}")
 
-# Define the Celery task
+        return f"Processed {processed_count} messages"
+
+    def run(self):
+        logger.info("Starting MidMessageProcessor...")
+        while True:
+            try:
+                self.process_messages()
+                time.sleep(self.check_interval)
+            except Exception as e:
+                logger.error(f"Error in main processing loop: {e}")
+                time.sleep(self.check_interval)
+
+
+# Create a Celery task to process Git and Jira task replies
 @celery_app.task(name='app.listeners.reply_git_jira.process_messages_for_reply')
 def process_messages_for_reply():
-    """Celery task to process messages awaiting final reply."""
-    logger.info("Running reply_git_jira task...")
-    try:
-        processor = MidMessageProcessor()
-        processor.process_messages()
-        logger.info("reply_git_jira task finished.")
-    except Exception as e:
-        logger.error(f"Unhandled error in process_messages_for_reply task: {e}", exc_info=True)
-
-
-# Remove the old execution block:
-# def run(self): ...
-# if __name__ == "__main__": ...
+    """Celery task to process messages and generate replies from Git/Jira task results"""
+    processor = MidMessageProcessor()
+    return processor.process_messages()
