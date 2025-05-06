@@ -48,7 +48,7 @@ celery_app.conf.update(
 # This ensures our email task goes to the 'email_queue' that our workers listen to
 # Define a new queue for the git/jira tasks
 celery_app.conf.task_routes = {
-    'app.listeners.email_listener.poll_inbox_task': {'queue': 'email_queue'},
+    'app.listeners.email.poll_inbox_task': {'queue': 'email_queue'},
     'app.listeners.slack.process_slack_message_task': {'queue': 'slack_queue'},
     'app.listeners.intent_classifier.process_unprocessed_messages_task': {'queue': 'classifier_queue'},
     'app.listeners.slack_reply.send_pending_replies_task': {'queue': 'reply_queue'},

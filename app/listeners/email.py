@@ -19,7 +19,7 @@ TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 USER_EMAIL    = "agent.tom@codsy.ai"
-BASE_API_URL  = os.getenv("BASE_API_URL", "http://localhost:8000")
+BASE_API_URL  = os.getenv("BASE_API_URL")
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -343,7 +343,7 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
 # ─── POLL INBOX ─────────────────────────────────────────────────────────────────
 
 # Create a Celery task for poll_inbox
-@celery_app.task(name='app.listeners.email_listener.poll_inbox_task')
+@celery_app.task(name='app.listeners.email.poll_inbox_task')
 def poll_inbox_task():
     """
     Celery task that checks for unread emails and processes them.

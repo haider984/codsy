@@ -7,17 +7,16 @@ from datetime import datetime, timezone
 import json
 
 # Load environment
-load_dotenv(override=True)
+load_dotenv()
 openai_api_key = os.getenv("TASK_ANALYZER_OPENAI_API_KEY")
-# Use INTERNAL_BASE_API_URL for calls made from within worker containers
-INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Default internal URL
+BASE_API_URL = os.getenv("BASE_API_URL", "http://localhost:8000")
 
 client = OpenAI(api_key=openai_api_key)
 logger = logging.getLogger("TaskAnalyzer")
 
 def fetch_message(mid):
     try:
-        response = requests.get(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}")
+        response = requests.get(f"{BASE_API_URL}/api/v1/messages/{mid}")
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -158,28 +157,39 @@ Content:
     except Exception as e:
         logger.error(f"Task analysis failed: {e}")
         return []
+from datetime import datetime, timezone
 
 def post_task(task, mid):
     task["mid"] = mid
+    task["reply"] = ""
     task["status"] = "pending"
-    task["creation_date"] = datetime.now(timezone.utc).isoformat()
-    task["completion_date"] = task["creation_date"]
+    
+    # Adjust creation_date to match the required format (without 'Z' or extra characters)
+    task["creation_date"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()  # No 'Z' added
+    
+    # Set completion_date to None if not provided
+    task["completion_date"] = None  # Ensure this is either None or a valid datetime
+    
+    task["description"] = task.get("description", "")  # Ensure description is provided
 
+    # Choose the correct endpoint based on the platform
     endpoint = "/api/v1/jiratasks/" if task["platform"] == "jira" else "/api/v1/gittasks/"
+
     try:
-        response = requests.post(INTERNAL_BASE_API_URL + endpoint, json=task)
-        response.raise_for_status()
+        response = requests.post(BASE_API_URL + endpoint, json=task)
+        response.raise_for_status()  # Will raise an exception for 4xx/5xx errors
         logger.info(f"Posted task: {task['title']} to {task['platform']}")
         return True
-    except Exception as e:
-        logger.error(f"Failed to post task: {e}")
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Failed to post task: {e.response.status_code} {e.response.text}")
         return False
+
 
 def update_message_status(mid, original_msg):
     try:
         original_msg["processed"] = True
         original_msg["status"] = "processed"
-        response = requests.put(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
+        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
         response.raise_for_status()
         logger.info(f"Updated message {mid} to processed")
     except Exception as e:

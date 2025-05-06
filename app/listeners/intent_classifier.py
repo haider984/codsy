@@ -1,57 +1,30 @@
 import os
+import time
 import logging
 import requests
+from app.services.generic_bot import GenericMessageHandler
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from openai import OpenAI
 from datetime import datetime, timezone
-import json # Ensure json is imported
+from app.services.task_analyzer import process_message_for_tasks
+from app.celery_app import celery_app  # Import the Celery app
 
-# Import Celery app instance
-from ..celery_app import celery_app
-
-# --- CORRECTED IMPORTS ---
-# Use '..' to go up from 'listeners' to 'app', then into 'services'
-from ..services.generic_bot import GenericMessageHandler
-from ..services.task_analyzer import process_message_for_tasks
-# --- END CORRECTED IMPORTS ---
-
-# (Optional but recommended) Basic import check
-try:
-    assert GenericMessageHandler is not None
-    assert process_message_for_tasks is not None
-    # Initialize logger after basic imports succeed to ensure logging works if imports fail later
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s:%(lineno)d %(message)s")
-    logger = logging.getLogger(__name__)
-    logger.info("Successfully imported handlers from app.services")
-except (ImportError, AssertionError, NameError) as e:
-    # Log critical error if imports fail
-    logging.basicConfig(level=logging.CRITICAL, format="%(asctime)s %(levelname)s %(name)s:%(lineno)d %(message)s")
-    logging.critical(f"CRITICAL ERROR: Failed to import required services: {e}", exc_info=True)
-    # Re-raise the exception to prevent the application from continuing in a broken state
-    raise ImportError(f"Could not import required services from app.services: {e}") from e
-
-# Instantiate handler only after successful import check
 generic_handler = GenericMessageHandler()
 
 # --- CONFIGURATION ---
-load_dotenv(override=True)
-# BASE_API_URL is needed by the *worker* executing the task
-INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Use internal URL
+load_dotenv()
+BASE_API_URL = os.getenv("BASE_API_URL")
 openai_api_key = os.getenv("INTENT_OPENAI_API_KEY")
-# CHECK_INTERVAL is no longer needed here, scheduling is handled by Celery Beat
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "10"))  # seconds
+MAX_RETRIES = 3  # Maximum number of retries for failed operations
 
-# --- GROQ CLIENT SETUP ---
+# --- LOGGER SETUP ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-openai_client = None
-if openai_api_key:
-    try:
-        openai_client = OpenAI(api_key=openai_api_key)
-        logger.info("OpenAI client initialized in intent_classifier.")
-    except Exception as e:
-         logger.error(f"Failed to initialize OpenAI client in intent_classifier: {e}")
-else:
-    logger.warning("INTENT_OPENAI_API_KEY missing in intent_classifier, classification may fail.")
+# --- OPENAI CLIENT SETUP ---
+openai_client = OpenAI(api_key=openai_api_key)
 
 # --- PROMPT TEMPLATES ---
 classification_prompt = PromptTemplate(
@@ -114,38 +87,46 @@ classification_prompt = PromptTemplate(
 
 
     Email content:
-    {body}
+{body}
 
-    Return exactly one word from the list above. If uncertain, choose "greeting".
-    """,
+Return exactly one word from the list above. If uncertain, choose "greeting".
+""",
     input_variables=["body"]
 )
 
-# --- HELPER FUNCTIONS (Now called within the Celery task) ---
+# --- HELPER FUNCTIONS ---
 def get_unprocessed_messages():
-    """Fetch all unprocessed messages from the API using the correct internal endpoint"""
+    """Fetch all unprocessed messages from the API using the correct endpoint"""
     try:
-        # Use INTERNAL_BASE_API_URL set for the worker environment
-        url = f"{INTERNAL_BASE_API_URL}/api/v1/messages/by_processed_status/?processed_status=false"
-        logger.debug(f"[Classifier Task] Fetching: {url}")
+        url = f"{BASE_API_URL}/api/v1/messages/by_processed_status/?processed_status=false"
+        logger.info(f"Fetching: {url}")
         response = requests.get(url)
         response.raise_for_status()
         messages = response.json()
-        logger.info(f"[Classifier Task] Fetched {len(messages)} unprocessed messages")
+        logger.info(f"Fetched {len(messages)} unprocessed messages")
         return messages
-    except requests.exceptions.RequestException as e:
-        logger.error(f"[Classifier Task] Fetch error contacting {INTERNAL_BASE_API_URL}: {e}")
-        return []
     except Exception as e:
-        logger.error(f"[Classifier Task] Generic fetch error: {e}")
+        logger.error(f"Fetch error: {e}")
         return []
 
+def get_message_by_id(mid):
+    """Fetch a specific message by ID"""
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/messages/{mid}")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            logger.error(f"Failed to fetch message {mid}: {response.status_code} {response.text}")
+            # If not found, we'll return the original message as is
+            return None
+    except Exception as e:
+        logger.error(f"Error fetching message {mid}: {e}")
+        return None
 
 def update_message_type(mid, message_type, original_message):
     """Update the message type and mark as processed"""
     try:
-        # Use INTERNAL_BASE_API_URL
-        api_endpoint = f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}"
+        # Build payload from existing message and add classification fields
         payload = {
             "sid": original_message["sid"],
             "uid": original_message["uid"],
@@ -162,32 +143,25 @@ def update_message_type(mid, message_type, original_message):
             "status": "processed"
         }
 
-        # Remove keys with None values if the API expects them omitted
-        payload = {k: v for k, v in payload.items() if v is not None}
-
-        logger.debug(f"[Classifier Task] Updating message {mid} via PUT {api_endpoint} with payload: {payload}")
-        response = requests.put(api_endpoint, json=payload)
+        logger.info(f"Updating message {mid} with payload: {payload}")
+        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=payload)
 
         if response.status_code == 200:
-            logger.info(f"[Classifier Task] Successfully updated message {mid} with type {message_type}")
+            logger.info(f"Successfully updated message {mid}")
             return True
         else:
-            logger.error(f"[Classifier Task] Failed to update message {mid}: {response.status_code} {response.text}. Payload: {json.dumps(payload)}")
+            logger.error(f"Failed to update message {mid}: {response.status_code} {response.text}")
             return False
     except Exception as e:
-        logger.error(f"[Classifier Task] Exception while updating message {mid}: {e}", exc_info=True)
+        logger.error(f"Exception while updating message {mid}: {e}")
         return False
 
 
 def classify_message_content(content):
     """Use OpenAI LLM to classify message content"""
-    if not openai_client:
-        logger.error("[Classifier Task] OpenAI client not initialized (missing OPENAI_API_KEY?)")
-        return "greeting" # Default if client isn't available
-
     try:
         prompt = classification_prompt.format(body=content)
-        logger.debug(f"[Classifier Task] Sending classification request to OpenAI")
+        
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -195,107 +169,178 @@ def classify_message_content(content):
         )
         classification = response.choices[0].message.content.strip().lower()
         logger.debug(f"[Classifier Task] OpenAI raw response: '{classification}'")
-
+        
+        # Check if the response contains any of our categories
         valid_types = ["meeting", "transcript", "instructions", "greeting"]
-        found_type = next((vt for vt in valid_types if vt in classification.split()), "greeting")
-
-        logger.info(f"[Classifier Task] Classified content as: {found_type}")
-        return found_type
-    except Exception as e:
-        logger.error(f"[Classifier Task] Error during OpenAI classification: {e}", exc_info=True)
+        
+        # Find if any valid type is in the response
+        found_type = None
+        for valid_type in valid_types:
+            if valid_type in classification:
+                found_type = valid_type
+                break
+        
+        # If a valid type was found in the response, use it
+        if found_type:
+            logger.info(f"Found classification: {found_type} in response: {classification}")
+            return found_type
+        
+        # If no valid type was found, default to greeting
+        logger.warning(f"No valid classification found in response: '{classification}', defaulting to 'greeting'")
         return "greeting"
-
+    except Exception as e:
+        logger.error(f"Error classifying message: {e}")
+        return "greeting"  # Default to greeting on error
 
 def route_message(message, message_type):
     """Route the message to the appropriate handler"""
-    mid = message.get("mid")
-    if not mid:
-        logger.error("[Classifier Task] Message missing 'mid', cannot route.")
-        return False
-
     try:
-        logger.info(f"[Classifier Task] Routing message {mid} (type: {message_type})...")
+        # Get the message ID
+        mid = message.get("mid")
+        
+        if not mid:
+            logger.error("Message has no mid field, cannot route")
+            return False
+            
+        # Different handling based on message type
         if message_type == "meeting":
-            # Add call to meeting handler if exists
-            logger.info(f"-> Meeting handler for {mid} (Not Implemented)")
+            logger.info(f"Routing meeting message {mid} to meeting handler")
+            # Call meeting handler here
+            # meeting_handler.process(message)
             return True
-        elif message_type in ["transcript", "instructions"]:
-             logger.info(f"-> Task Analyzer for {mid}")
-             process_message_for_tasks(mid) # Call imported function
-             return True
+            
+        elif message_type == "transcript":
+            logger.info(f"Routing transcript message {mid} to transcript handler")
+            # Call transcript handler here
+            process_message_for_tasks(mid)
+            return True
+            
+        elif message_type == "instructions":
+            logger.info(f"Routing instructions message {mid} to instructions handler")
+            # Call instructions handler here
+            process_message_for_tasks(mid)
+            return True
+            
         elif message_type == "greeting":
-             logger.info(f"-> Generic Handler for {mid}")
-             return generic_handler.process_message(message, message_type) # Use imported handler instance
+            logger.info(f"Routing greeting message {mid} to greeting handler")
+            # Call greeting handler here
+            return generic_handler.process_message(message,message_type)
+            
         else:
-            logger.warning(f"[Classifier Task] Unknown message type '{message_type}' for mid {mid}, cannot route.")
+            logger.warning(f"Unknown message type {message_type} for message {mid}")
             return False
     except Exception as e:
-        logger.error(f"[Classifier Task] Error routing message {mid}: {e}", exc_info=True)
+        logger.error(f"Error routing message: {e}")
         return False
 
-
-# --- CELERY TASK DEFINITION ---
-
-@celery_app.task(name="app.listeners.intent_classifier.process_unprocessed_messages_task")
+# --- MAIN PROCESS FUNCTION ---
+@celery_app.task(name='app.listeners.intent_classifier.process_unprocessed_messages_task')
 def process_unprocessed_messages_task():
-    """
-    Celery task to fetch unprocessed messages, classify them,
-    update their status/type, and route them.
-    """
-    task_logger = logging.getLogger(__name__ + ".task") # Specific logger for the task run
-    task_logger.info("Starting message classification task run...")
-
+    """Celery task for processing unprocessed messages"""
+    logger.info("Checking for unprocessed messages...")
+    
+    # Get all unprocessed messages
     messages = get_unprocessed_messages()
-    if not messages:
-        task_logger.info("No unprocessed messages found this run.")
-        return
-
-    processed_count = 0
-    failed_update_count = 0
-    routing_failed_count = 0
-    error_count = 0
-
+    logger.info(f"Found {len(messages)} unprocessed messages")
+    
     for msg in messages:
-        mid = msg.get("mid")
-        if not mid:
-            task_logger.warning("Skipping message without 'mid'.")
-            continue
-
         try:
-            content = msg.get("content", "")
-            if not content:
-                task_logger.warning(f"Message {mid} has no content. Marking as 'greeting' and processed.")
-                # Update with default type if content is missing but record exists
-                if update_message_type(mid, "greeting", msg):
-                    processed_count +=1 # Count as processed (even if defaulted)
-                else:
-                    failed_update_count += 1
+            mid = msg.get("mid")
+            
+            if not mid:
+                logger.warning("Message has no ID, skipping")
                 continue
-
-            # Classify
+                
+            # Get the full message details - we actually don't need to get it again 
+            # since we already have all the message details in the msg object
+            # message = get_message_by_id(mid)
+            message = msg  # Use the message object we already have
+            
+            # Log the message structure for debugging
+            logger.info(f"Processing message with mid: {mid}")
+            
+            # Extract content from the message
+            content = message.get("content", "")
+            
+            if not content:
+                logger.warning(f"Message {mid} has no content, skipping")
+                update_message_type(mid, "greeting",message)  # Mark as processed with default type
+                continue
+                
+            # Classify the message
             message_type = classify_message_content(content)
-            task_logger.info(f"Message {mid} classified as: {message_type}")
-
-            # Update and Route
-            if update_message_type(mid, message_type, msg):
-                if route_message(msg, message_type):
-                    processed_count += 1
-                else:
-                    routing_failed_count += 1
-                    task_logger.warning(f"Routing failed for message {mid} (type: {message_type}). Check handler logic.")
+            logger.info(f"Classified message {mid} as: {message_type}")
+            
+            # Update the message with its type
+            if update_message_type(mid, message_type,message):
+                # Route to appropriate handler
+                route_message(message, message_type)
             else:
-                # Update failed, log error, message remains unprocessed for next run
-                failed_update_count += 1
-                task_logger.error(f"Failed to update message {mid} after classification. It will be retried.")
-
+                logger.error(f"Failed to update message {mid}, not routing")
+                
         except Exception as e:
-            error_count += 1
-            task_logger.error(f"Unhandled error processing message {mid}: {e}", exc_info=True)
-            # Decide if you want to attempt to mark as errored/processed here
+            logger.error(f"Error processing message: {e}")
+    
+    return f"Processed {len(messages)} messages"
 
-    task_logger.info(f"Finished message classification task run. Processed: {processed_count}, Update Fails: {failed_update_count}, Routing Fails: {routing_failed_count}, Errors: {error_count}")
+# --- MAIN EXECUTION LOOP ---
+def process_messages():
+    """Main function to process unprocessed messages"""
+    logger.info("Checking for unprocessed messages...")
+    
+    # Get all unprocessed messages
+    messages = get_unprocessed_messages()
+    logger.info(f"Found {len(messages)} unprocessed messages")
+    
+    for msg in messages:
+        try:
+            mid = msg.get("mid")
+            
+            if not mid:
+                logger.warning("Message has no ID, skipping")
+                continue
+                
+            # Get the full message details - we actually don't need to get it again 
+            # since we already have all the message details in the msg object
+            # message = get_message_by_id(mid)
+            message = msg  # Use the message object we already have
+            
+            # Log the message structure for debugging
+            logger.info(f"Processing message with mid: {mid}")
+            
+            # Extract content from the message
+            content = message.get("content", "")
+            
+            if not content:
+                logger.warning(f"Message {mid} has no content, skipping")
+                update_message_type(mid, "greeting",message)  # Mark as processed with default type
+                continue
+                
+            # Classify the message
+            message_type = classify_message_content(content)
+            logger.info(f"Classified message {mid} as: {message_type}")
+            
+            # Update the message with its type
+            if update_message_type(mid, message_type,message):
+                # Route to appropriate handler
+                route_message(message, message_type)
+            else:
+                logger.error(f"Failed to update message {mid}, not routing")
+                
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
 
-
-# --- REMOVE MAIN EXECUTION LOOP ---
-# The 'while True' loop and 'if __name__ == "__main__":' are removed.
-# Celery Beat will schedule the execution of 'process_unprocessed_messages_task'.
+# This is kept for direct execution, but it's not used by Celery
+def main():
+    """Main loop to periodically check for and process messages"""
+    logger.info("Starting Intent Classifier service...")
+    
+    while True:
+        try:
+            process_messages()
+        except Exception as e:
+            logger.error(f"Error in main processing loop: {e}")
+            
+        # Sleep for the configured interval
+        logger.info(f"Sleeping for {CHECK_INTERVAL} seconds...")
+        time.sleep(CHECK_INTERVAL)
