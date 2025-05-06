@@ -2,7 +2,7 @@ import os
 import time
 import logging
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from groq import Groq
 from app.celery_app import celery_app  # Import Celery app
@@ -44,8 +44,9 @@ class MidMessageProcessor:
             url = f"{BASE_API_URL}/api/v1/gittasks/by_message/{mid}"
             response = requests.get(url)
             response.raise_for_status()
-            print(f"Fetched {len(response.json())} git tasks for message ID {mid}")
-            return response.json()
+            tasks = response.json()
+            logger.warning(f"Fetched {len(tasks)} git tasks for message ID {mid}")
+            return tasks
         
         except Exception as e:
             logger.error(f"Error fetching git tasks for message ID {mid}: {e}")
@@ -56,8 +57,9 @@ class MidMessageProcessor:
             url = f"{BASE_API_URL}/api/v1/jiratasks/by_message/{mid}"
             response = requests.get(url)
             response.raise_for_status()
-            print(f"Fetched {len(response.json())} jira tasks for message ID {mid}")
-            return response.json()
+            tasks = response.json()
+            logger.warning(f"Fetched {len(tasks)} jira tasks for message ID {mid}")
+            return tasks
         except Exception as e:
             logger.error(f"Error fetching jira tasks for message ID {mid}: {e}")
             return []
@@ -109,7 +111,6 @@ class MidMessageProcessor:
         Final response to the user:
         """
 
-
         try:
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -124,20 +125,67 @@ class MidMessageProcessor:
             logger.error(f"Error generating summary with LLM for message {mid}: {e}")
             return "An error occurred while generating a response for your message."
 
-    def update_message_with_reply(self, mid, reply):
+    def try_claim_message(self, mid):
+        """Attempt to atomically claim a message for processing"""
         try:
             url = f"{BASE_API_URL}/api/v1/messages/{mid}"
             get_response = requests.get(url)
             get_response.raise_for_status()
             message_data = get_response.json()
+            
+            # Don't process if already claimed or completed
+            if message_data.get("status") in ["claiming", "handling", "successful"]:
+                logger.info(f"Message {mid} already has status {message_data.get('status')}, skipping")
+                return None
+                
+            # First, mark it as "claiming" to prevent other workers from claiming it
+            claim_data = message_data.copy()
+            claim_data["status"] = "claiming"
+            claim_data["claimed_at"] = datetime.now(timezone.utc).isoformat()
+            
+            # Try to update the status atomically
+            update_response = requests.put(url, json=claim_data)
+            update_response.raise_for_status()
+            
+            # Double check we actually got it
+            check_response = requests.get(url)
+            check_response.raise_for_status()
+            current_status = check_response.json().get("status")
+            
+            if current_status == "claiming":
+                logger.info(f"Successfully claimed message {mid} for processing")
+                return message_data
+            else:
+                logger.warning(f"Failed to claim message {mid}, current status: {current_status}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error claiming message {mid}: {e}")
+            return None
 
+    def update_message_with_reply(self, mid, reply, original_data):
+        try:
+            url = f"{BASE_API_URL}/api/v1/messages/{mid}"
+            
+            # Before updating, verify current status matches what we expect
+            get_response = requests.get(url)
+            get_response.raise_for_status()
+            current_data = get_response.json()
+            
+            # If someone else modified the message while we were processing, don't update
+            if current_data.get("status") != "claiming":
+                logger.warning(f"Message {mid} status changed from claiming to {current_data.get('status')}, aborting update")
+                return False
+            
+            # Create update with original data to prevent overwriting other fields
+            message_data = original_data.copy()
             message_data["reply"] = reply
-            message_data["status"] = "processed"
+            message_data["status"] = "processed"  # Keep as "processed" for reply.py to handle
             message_data["completion_date"] = datetime.now(timezone.utc).isoformat()
 
             update_response = requests.put(url, json=message_data)
             update_response.raise_for_status()
-            logger.info(f"Successfully updated message {mid} with reply and marked as completed")
+            logger.info(f"Successfully updated message {mid} with reply and marked as processed")
             return True
         except Exception as e:
             logger.error(f"Error updating message {mid}: {e}")
@@ -156,10 +204,30 @@ class MidMessageProcessor:
             if not mid:
                 logger.warning("Found message without MID, skipping")
                 continue
+            
+            # Skip messages that already have replies
+            if message.get("reply"):
+                logger.info(f"Message {mid} already has a reply, skipping")
+                continue
 
             logger.info(f"===== Processing message ID: {mid} =====")
 
             try:
+                # Check if there are any Git or Jira tasks for this message
+                git_tasks = self.fetch_git_tasks_for_mid(mid)
+                jira_tasks = self.fetch_jira_tasks_for_mid(mid)
+                
+                # If no tasks found, skip this message
+                if not git_tasks and not jira_tasks:
+                    logger.info(f"No Git/Jira tasks found for message {mid}, skipping")
+                    continue
+                
+                # Try to claim this message for processing
+                claimed_message = self.try_claim_message(mid)
+                if not claimed_message:
+                    logger.info(f"Could not claim message {mid}, skipping")
+                    continue
+                    
                 # Wait for all task replies to be available
                 all_tasks = self.wait_for_all_task_replies(mid)
                 if not all_tasks:
@@ -167,11 +235,10 @@ class MidMessageProcessor:
                     continue
 
                 # Generate the summary reply using LLM
-                print(all_tasks)
                 reply = self.generate_summary_for_message(mid, all_tasks)
 
                 # Update the message with the final reply
-                success = self.update_message_with_reply(mid, reply)
+                success = self.update_message_with_reply(mid, reply, claimed_message)
                 if success:
                     logger.info(f"Successfully processed message {mid}")
                     processed_count += 1

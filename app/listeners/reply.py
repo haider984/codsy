@@ -146,12 +146,20 @@ def send_pending_replies_task():
         if not message:
             continue
 
+        # Only process messages with status "processed", not those already being handled
+        if message.get("status") != "processed":
+            print(f"⚠️ Skipping message {mid} — status is not 'processed'")
+            continue
+
         channel = message.get("channel", "").lower()
         reply = message.get("reply")
 
         if not reply:
             print(f"⚠️ Skipping message {mid} — no reply content")
             continue
+
+        # Mark message as being handled to prevent other workers from processing it
+        mark_as_handling(mid, message)
 
         success = False
 
@@ -176,6 +184,25 @@ def send_pending_replies_task():
             processed_count += 1
     
     return f"Processed {processed_count} replies"
+
+def mark_as_handling(mid, original_message):
+    """Mark message as being handled to prevent duplicate processing"""
+    try:
+        payload = original_message.copy()
+        payload["status"] = "handling"  # Temporary status while processing
+        
+        print(f"Marking message {mid} as 'handling'")
+        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=payload)
+        
+        if response.status_code == 200:
+            print(f"✅ Successfully marked message {mid} as handling")
+            return True
+        else:
+            print(f"❌ Failed to mark message {mid}: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Exception while marking message {mid}: {e}")
+        return False
 
 # Keep the original process_messages function for backward compatibility
 def process_messages():
