@@ -55,25 +55,25 @@ services:
 
   # # ---- SLACK SERVICES ----
 
-  # slack_listener: # Runs the python script to listen via Socket Mode
-  #   build: .
-  #   # Command to run the slack listener script directly
-  #   command: python -m app.listeners.slack
-  #   volumes:
-  #     - ./app:/app/app
-  #   env_file:
-  #     - .env # MUST contain SLACK_BOT_TOKEN and SLACK_APP_TOKEN
-  #   environment:
-  #     # Listener needs broker URL to *send* tasks to the worker
-  #     - CELERY_BROKER_URL=redis://redis:6379/0
-  #     # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
-  #     # - INTERNAL_BASE_API_URL=http://web:8000
-  #   depends_on:
-  #     - redis # Depends on broker to send tasks
-  #     # - web # Only if it calls the API directly
-  #   restart: always
-  #   # networks: # Uncomment if using custom network
-  #   #   - default
+  slack_listener: # Runs the python script to listen via Socket Mode
+    build: .
+    # Command to run the slack listener script directly
+    command: python -m app.listeners.slack
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env # MUST contain SLACK_BOT_TOKEN and SLACK_APP_TOKEN
+    environment:
+      # Listener needs broker URL to *send* tasks to the worker
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
+      # - INTERNAL_BASE_API_URL=http://web:8000
+    depends_on:
+      - redis # Depends on broker to send tasks
+      # - web # Only if it calls the API directly
+    restart: always
+    # networks: # Uncomment if using custom network
+    #   - default
 
   # slack_worker: # Worker dedicated to processing tasks from the slack_queue
   #   build: .
