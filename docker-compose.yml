@@ -53,143 +53,136 @@ services:
     # networks: # Uncomment if using custom network
     #   - default
 
-  # ---- SLACK SERVICES ----
+  # # ---- SLACK SERVICES ----
 
-  slack_listener: # Runs the python script to listen via Socket Mode
-    build: .
-    # Command to run the slack listener script directly
-    command: python -m app.listeners.slack
-    volumes:
-      - ./app:/app/app
-    env_file:
-      - .env # MUST contain SLACK_BOT_TOKEN and SLACK_APP_TOKEN
-    environment:
-      # Listener needs broker URL to *send* tasks to the worker
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
-      # - INTERNAL_BASE_API_URL=http://web:8000
-    depends_on:
-      - redis # Depends on broker to send tasks
-      # - web # Only if it calls the API directly
-    restart: always
-    # networks: # Uncomment if using custom network
-    #   - default
+  # slack_listener: # Runs the python script to listen via Socket Mode
+  #   build: .
+  #   # Command to run the slack listener script directly
+  #   command: python -m app.listeners.slack
+  #   volumes:
+  #     - ./app:/app/app
+  #   env_file:
+  #     - .env # MUST contain SLACK_BOT_TOKEN and SLACK_APP_TOKEN
+  #   environment:
+  #     # Listener needs broker URL to *send* tasks to the worker
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
+  #     # - INTERNAL_BASE_API_URL=http://web:8000
+  #   depends_on:
+  #     - redis # Depends on broker to send tasks
+  #     # - web # Only if it calls the API directly
+  #   restart: always
+  #   # networks: # Uncomment if using custom network
+  #   #   - default
 
-  slack_worker: # Worker dedicated to processing tasks from the slack_queue
-    build: .
-    # Command to start celery worker listening ONLY to the slack queue
-    command: celery -A app.celery_app worker --loglevel=info -Q slack_queue
-    volumes:
-      - ./app:/app/app
-    env_file:
-      - .env # Needs ALL env vars required by the slack task
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Worker needs the internal API URL to call back to the 'web' service
-      - INTERNAL_BASE_API_URL=http://web:8000
-    depends_on:
-      - redis
-      - web
-    restart: always
-    # networks: # Uncomment if using custom network
-    #   - default
+  # slack_worker: # Worker dedicated to processing tasks from the slack_queue
+  #   build: .
+  #   # Command to start celery worker listening ONLY to the slack queue
+  #   command: celery -A app.celery_app worker --loglevel=info -Q slack_queue
+  #   volumes:
+  #     - ./app:/app/app
+  #   env_file:
+  #     - .env # Needs ALL env vars required by the slack task
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     # Worker needs the internal API URL to call back to the 'web' service
+  #     - INTERNAL_BASE_API_URL=http://web:8000
+  #   depends_on:
+  #     - redis
+  #     - web
+  #   restart: always
+  #   # networks: # Uncomment if using custom network
+  #   #   - default
 
-  # ---- BEAT SERVICE ----
+  # # ---- BEAT SERVICE ----
 
-  beat: # Now schedules both email polling AND intent classification
-    build: .
-    # Corrected Command: Use the default Celery Beat scheduler
-    command: celery -A app.celery_app beat --loglevel=info
-    # volumes: # Temporarily commented out
-    env_file:
-      - .env
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Add other necessary env vars if beat accesses DB or APIs directly
-    depends_on:
-      - redis
-      # - web # Only if beat calls the API
-    restart: always
+  # beat: # Now schedules both email polling AND intent classification
+  #   build: .
+  #   # Corrected Command: Use the default Celery Beat scheduler
+  #   command: celery -A app.celery_app beat --loglevel=info
+  #   # volumes: # Temporarily commented out
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     # Add other necessary env vars if beat accesses DB or APIs directly
+  #   depends_on:
+  #     - redis
+  #     # - web # Only if beat calls the API
+  #   restart: always
 
-  # ---- CLASSIFIER WORKER SERVICE ----
-  classifier_worker: # New worker service for the classifier queue
-    build: .
-    # Command to start celery worker listening ONLY to the classifier queue
-    command: celery -A app.celery_app worker --loglevel=info -Q classifier_queue
-    volumes:
-      - ./app:/app/app
-    env_file:
-      - .env # Needs GROQ_API_KEY and other env vars needed by the task/handlers
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Worker needs the internal API URL to call back to the 'web' service
-      - INTERNAL_BASE_API_URL=http://web:8000
-    depends_on:
-      - redis
-      - web # Depends on the API service being available
-    restart: always
+  # # ---- CLASSIFIER WORKER SERVICE ----
+  # classifier_worker: # New worker service for the classifier queue
+  #   build: .
+  #   # Command to start celery worker listening ONLY to the classifier queue
+  #   command: celery -A app.celery_app worker --loglevel=info -Q classifier_queue
+  #   volumes:
+  #     - ./app:/app/app
+  #   env_file:
+  #     - .env # Needs GROQ_API_KEY and other env vars needed by the task/handlers
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     # Worker needs the internal API URL to call back to the 'web' service
+  #     - INTERNAL_BASE_API_URL=http://web:8000
+  #   depends_on:
+  #     - redis
+  #     - web # Depends on the API service being available
+  #   restart: always
 
-  # ---- REPLY WORKER SERVICE ----
-  reply_worker: # Worker dedicated to sending replies
-    build: .
-    # Command to start celery worker listening ONLY to the reply queue
-    command: celery -A app.celery_app worker --loglevel=info -Q reply_queue
-    volumes:
-      - ./app:/app/app
-    env_file:
-      - .env # Needs SLACK_BOT_TOKEN, Graph API creds
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - INTERNAL_BASE_API_URL=http://web:8000
-      - TENANT_ID=${TENANT_ID}
-      - CLIENT_ID=${CLIENT_ID}
-      - CLIENT_SECRET=${CLIENT_SECRET}
-      - USER_EMAIL=${USER_EMAIL}
-    depends_on:
-      - redis
-      - web # Depends on the API service being available
-    restart: always
+  # # ---- REPLY WORKER SERVICE ----
+  # reply_worker: # Worker dedicated to sending replies
+  #   build: .
+  #   # Command to start celery worker listening ONLY to the reply queue
+  #   command: celery -A app.celery_app worker --loglevel=info -Q reply_queue
+  #   volumes:
+  #     - ./app:/app/app
+  #   env_file:
+  #     - .env # Needs SLACK_BOT_TOKEN, Graph API creds
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - INTERNAL_BASE_API_URL=http://web:8000
+  #     - TENANT_ID=${TENANT_ID}
+  #     - CLIENT_ID=${CLIENT_ID}
+  #     - CLIENT_SECRET=${CLIENT_SECRET}
+  #     - USER_EMAIL=${USER_EMAIL}
+  #   depends_on:
+  #     - redis
+  #     - web # Depends on the API service being available
+  #   restart: always
 
-  # ---- GIT/JIRA WORKER SERVICE ----
-  git_jira_worker: # Worker service for the git/jira task execution queue
-    build: .
-    command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
-    volumes:
-      - ./app:/app/app
-    env_file:
-      - .env
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - INTERNAL_BASE_API_URL=http://web:8000
-      # Add specific GITHUB/JIRA/GROQ keys if needed and not in .env
-    depends_on:
-      - redis
-      - web
-    restart: always
+  # # ---- GIT/JIRA WORKER SERVICE ----
+  # git_jira_worker: # Worker service for the git/jira task execution queue
+  #   build: .
+  #   command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
+  #   volumes:
+  #     - ./app:/app/app
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - INTERNAL_BASE_API_URL=http://web:8000
+  #     # Add specific GITHUB/JIRA/GROQ keys if needed and not in .env
+  #   depends_on:
+  #     - redis
+  #     - web
+  #   restart: always
 
-  # ---- REPLY GIT/JIRA WORKER SERVICE ----
-  reply_git_jira_worker: # New worker service for the reply generation queue
-    build: .
-    # Command to start celery worker listening ONLY to the reply_git_jira queue
-    command: celery -A app.celery_app worker --loglevel=info -Q reply_git_jira_queue
-    volumes:
-      - ./app:/app/app # Mount code same as web
-    env_file:
-      - .env         # Load necessary environment variables (GROQ_API_KEY etc.)
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
-      # Worker needs internal API URL to call back to 'web' service
-      - INTERNAL_BASE_API_URL=http://web:8000
-      # Explicitly add GROQ_API_KEY if needed and not in .env
-      # - GROQ_API_KEY=${GROQ_API_KEY}
-    depends_on:
-      - redis        # Depends on the message broker
-      - web          # Depends on the API service being available
-    restart: always  # Restart worker if it fails
-
-# networks:
-#   default:
-#     driver: bridge
-
-# volumes:
-#   celerybeat-schedule:
+  # # ---- REPLY GIT/JIRA WORKER SERVICE ----
+  # reply_git_jira_worker: # New worker service for the reply generation queue
+  #   build: .
+  #   # Command to start celery worker listening ONLY to the reply_git_jira queue
+  #   command: celery -A app.celery_app worker --loglevel=info -Q reply_git_jira_queue
+  #   volumes:
+  #     - ./app:/app/app # Mount code same as web
+  #   env_file:
+  #     - .env         # Load necessary environment variables (GROQ_API_KEY etc.)
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
+  #     # Worker needs internal API URL to call back to 'web' service
+  #     - INTERNAL_BASE_API_URL=http://web:8000
+  #     # Explicitly add GROQ_API_KEY if needed and not in .env
+  #     # - GROQ_API_KEY=${GROQ_API_KEY}
+  #   depends_on:
+  #     - redis        # Depends on the message broker
+  #     - web          # Depends on the API service being available
+  #   restart: always  # Restart worker if it fails

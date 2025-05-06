@@ -60,7 +60,7 @@ celery_app.conf.task_routes = {
 # Add Celery Beat schedule
 celery_app.conf.beat_schedule = {
     'poll-email-every-5-seconds': { # A descriptive name for the schedule entry
-        'task': 'app.listeners.email_listener.poll_inbox_task', # The name of the task to run
+        'task': 'app.listeners.email.poll_inbox_task', # Changed from 'email_listener' to 'email'
         'schedule': 5.0, # Run every 5 seconds
         'options': {'queue': 'email_queue'} # Ensure scheduled task goes to the right queue
     },
