@@ -7,7 +7,8 @@ from github import Github
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 import requests
 import subprocess
-from groq import Groq
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
 import hashlib
 import re
 import zipfile
@@ -22,8 +23,6 @@ GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 github_client = Github(GITHUB_TOKEN)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-groq_client = Groq(api_key=GROQ_API_KEY)
-
 API_URL = "https://api.github.com"
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
@@ -709,7 +708,7 @@ def rename_branch(repo_name: str, old_branch: str, new_branch: str):
 
 def generate_code(request_prompt):
     """
-    Generate code from a natural language prompt using the Groq LLM.
+    Generate code from a natural language prompt using the ChatGroq LLM.
     
     Args:
         request_prompt (str): Prompt for code generation (e.g., "Write an HTML contact form").
@@ -717,34 +716,30 @@ def generate_code(request_prompt):
     Returns:
         str: Generated code, or an error message.
     """
-    messages = [
-    {
-        "role": "system",
-        "content": (
-            "You are an expert programmer. Write clean, concise, and correct code based on the user's instructions. "
-            "Your response must include only the final code — no explanations, no formatting tags, no extra words, "
-            "and no quotation marks. Do not mention the programming language. Just output the code."
-        )
-    },
-    {
-        "role": "user",
-        "content": request_prompt
-    }
-]
+    if not os.getenv("GROQ_API_KEY"):
+        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+        return "generate_code_error"
 
     try:
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=messages,
-            temperature=0.3,
-            max_completion_tokens=1024,
-            tool_choice="none"
-        )
-        generated_code = response.choices[0].message.content.strip()
-        return generated_code
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
+        prompt_template = PromptTemplate(
+            template=""" "You are an expert programmer. Write clean, concise, and correct code based on the user's instructions. "
+            "Your response must include only the final code — no explanations, no formatting tags, no extra words, "
+            "and no quotation marks. Do not mention the programming language. Just output the code."
+
+            User query: {request_prompt}""",
+        input_variables=["request_prompt"],
+    )
+    
+        prompt = prompt_template.format(request_prompt=request_prompt)
+
+        response = llm.invoke(prompt)
+        
+        return response.content.strip().lower()
+
     except Exception as e:
-        logger.error(f"Error generating code: {e}")
-        return "Sorry, I encountered an error generating the code."
+        logging.error(f"Error generating code: {e}")
+        return f"Error generating code: {e}"
 
 def update_code(existing_code, instruction):
     """
@@ -757,29 +752,27 @@ def update_code(existing_code, instruction):
     Returns:
         str: Updated code after modifications.
     """
-    system_prompt = (
-        "You are an expert programmer and code refiner."
+    if not os.getenv("GROQ_API_KEY"):
+        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+        return "update_code_error"
+
+    try:
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
+        prompt_template = PromptTemplate(
+            template=""" "You are an expert programmer and code refiner."
         "Analyze the provided code and modify it according to the instruction."
         "Your response must contain only the final, updated code — no explanations, no formatting tags, no extra text, no quotation marks, and no language identifiers."
         "Ensure the code is syntactically correct and complete."
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"Here is the current code:\n```python\n{existing_code}\n```\n"
-            f"Modify it as per the following instruction:\n{instruction}\n"
-            f"Provide only the final updated code."
-        )}
-    ]
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=messages,
-            temperature=0.3,
-            max_completion_tokens=2048,
-            tool_choice="none"
+
+            current code: {existing_code}
+            instruction: {instruction}""",
+        input_variables=["existing_code", "instruction"],
         )
-        updated_code = response.choices[0].message.content.strip()
+        
+        prompt = prompt_template.format(existing_code=existing_code, instruction=instruction)
+        response = llm.invoke(prompt)
+        
+        updated_code = response.content.strip()
         return updated_code
     except Exception as e:
         logger.error(f"Error in intelligent_code_modifier: {e}")
@@ -952,6 +945,9 @@ def intelligent_code_modifier(current_code: str, instruction: str) -> str:
     Returns:
         str: Updated code after modifications.
     """
+    if not os.getenv("GROQ_API_KEY"):
+        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+        return "identify_function_error"
     
     system_prompt = (
         "You are an expert programmer and code refiner."

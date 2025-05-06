@@ -1,9 +1,11 @@
 import os
 from dotenv import load_dotenv
-from groq import Groq
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
 import json
 import sys
 import re
+import logging
 from .jira_functions import (
     connect_jira, list_projects, get_project, create_issue, get_issue,
     update_issue, add_comment, delete_issue, assign_issue,
@@ -29,30 +31,15 @@ from .metadata_utils import (
 
 # Load environment
 load_dotenv()
-
-# Get API keys from environment variables
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    print("Warning: GROQ_API_KEY environment variable not set.") # Or raise an error
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None # Handle missing key
 
-# Get Jira credentials from environment variables
+# Jira credentials
 JIRA_SERVER = os.getenv("JIRA_SERVER")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
-JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-
-# Validate essential Jira credentials
-if not all([JIRA_SERVER, JIRA_EMAIL, JIRA_API_TOKEN]):
-    # Consider raising an error or logging a critical failure
-    print("Critical Error: JIRA_SERVER, JIRA_EMAIL, or JIRA_API_TOKEN environment variable not set.")
-    jira = None # Prevent client initialization if creds are missing
-else:
-    # Initialize Jira client (ensure connect_jira uses these vars or receives them)
-    # Assuming connect_jira is modified to use these env vars or accept them as args
-    jira = connect_jira()
-
-# Ensure client and jira are initialized before using them
-# Add checks later in the code where client or jira are used, e.g., if client: ...
+JIRA_API_TOKEN =os.getenv("JIRA_API_TOKEN")
+    
+# Initialize Jira client
+jira = connect_jira()
 
 function_descriptions = {
     "list_projects": "Lists all available Jira projects",
@@ -92,9 +79,14 @@ function_descriptions = {
 
 def extract_parameters(func_name, query):
     """
-    Use Groq with Llama 3.3 Versatile to extract parameters from the user query
+    Use ChatGroq with Llama 3.3 Versatile to extract parameters from the user query
     based on the function name.
     """
+
+    if not os.getenv("GROQ_API_KEY"):
+            logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+            return "parameter_extraction_error"
+    
     # Special case for create_project_rest to ensure we get a valid key and name
     if func_name == "create_project_rest" and "project" in query.lower():
         # Try to extract project name directly first
@@ -150,37 +142,37 @@ def extract_parameters(func_name, query):
     
     # Create a prompt for Groq to extract parameters
     param_list = ", ".join(required_params)
-    prompt = f"""
-    Extract the following parameters from the user query: {param_list}
-    User query: "{query}"
-    Return ONLY a JSON object with the parameter names as keys and extracted values as values.
-    Additional instructions:
-    - If a parameter is not found in the query, set its value to null or a reasonable default.
-    - If any date is mentioned, convert it to the format "yyyy-MM-dd".
-    - If any label is mentioned, normalize it by replacing spaces with underscores (e.g., "very low" → "very_low").
-    - If a project name is mentioned (e.g. "test"), create a new key `"project"` with the value set to the uppercase of the project name (e.g., "TEST").
-    - If an issue is referenced like "issue 5 in project test" or "issue one in test", create a new key `"issue"` with the value formatted as issue_key (e.g., "TEST-5").
-    - Handle numeric and word forms of small integers (e.g., "one" = 1, "two" = 2).
-    - project_key must match the inferred project key in uppercase.
-    Return output in the following JSON format:
-    ```json
-    {{
-    "param1": "value1",
-    "param2": "value2"
-    }}
-
-
-    """
-    
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_completion_tokens=400
+        llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+        extraction_prompt = PromptTemplate(
+            template="""
+                Extract the following parameters from the user query: {param_list}
+                User query: "{query}"
+                Return ONLY a JSON object with the parameter names as keys and extracted values as values.
+                Additional instructions:
+                - If a parameter is not found in the query, set its value to null or a reasonable default.
+                - If any date is mentioned, convert it to the format "yyyy-MM-dd".
+                - If any label is mentioned, normalize it by replacing spaces with underscores (e.g., "very low" → "very_low").
+                - If a project name is mentioned (e.g. "test"), create a new key `"project"` with the value set to the uppercase of the project name (e.g., "TEST").
+                - If an issue is referenced like "issue 5 in project test" or "issue one in test", create a new key `"issue"` with the value formatted as issue_key (e.g., "TEST-5").
+                - Handle numeric and word forms of small integers (e.g., "one" = 1, "two" = 2).
+                - project_key must match the inferred project key in uppercase.
+                Return output in the following JSON format:
+                ```json
+                {{
+                "param1": "value1",
+                "param2": "value2"
+                }}
+                """,
+                input_variables=["param_list", "query"],
         )
-        
-        result = response.choices[0].message.content
+    
+        formatted_prompt = extraction_prompt.format(
+                param_list=param_list,
+                query=query
+            )
+        response = llm.invoke(formatted_prompt)
+        result = response.content.strip().lower()
         
         # Extract JSON from response
         json_match = re.search(r'```json\s*(.*?)\s*```', result, re.DOTALL)
@@ -202,31 +194,39 @@ def extract_parameters(func_name, query):
 
 def identify_function(query):
     """
-    Use Groq with Llama 3.3 Versatile to identify the most appropriate function
+    Use ChatGroq with Llama 3.3 Versatile to identify the most appropriate function
     based on the user query.
     """
+
+    if not os.getenv("GROQ_API_KEY"):
+        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+        return "function_identification_error"
+    
     function_list = "\n".join([f"- {name}: {desc}" for name, desc in function_descriptions.items()])
-    
-    prompt = f"""
-Based on the following functions available for Jira interaction, identify the SINGLE most appropriate function to call based on the user query.
 
-Available functions:
-{function_list}
-
-User query: "{query}"
-
-Return ONLY the function name, nothing else. Just the function name as a single word.
-"""
-    
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_completion_tokens=100
+        llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+        analysis_prompt = PromptTemplate(
+            template="""
+                Based on the following functions available for Jira interaction, identify the SINGLE most appropriate function to call based on the user query.
+
+                Available functions:
+                {function_list}
+
+                User query: "{query}"
+
+                Return ONLY the function name, nothing else. Just the function name as a single word.
+                """,
+            input_variables=["function_list", "query"],
         )
+
+        formatted_prompt = analysis_prompt.format(
+                function_list=function_list,
+                query=query
+            )
+        response = llm.invoke(formatted_prompt)
         
-        function_name = response.choices[0].message.content.strip()
+        function_name = response.content.strip().lower()
         # Remove any extra text, quotes, backticks, etc.
         function_name = re.sub(r'[`"\'\n]', '', function_name)
         
@@ -246,8 +246,6 @@ Return ONLY the function name, nothing else. Just the function name as a single 
         print(f"Error identifying function: {e}")
         return None
 
-
-
 def generate_unique_project_key(base_key, json_path):
     key = base_key
     suffix = 1
@@ -264,8 +262,6 @@ def generate_unique_project_key(base_key, json_path):
         suffix += 1
 
     return key
-
-
 
 def process_query_jira(query):
     print(f"Processing query: {query}")
@@ -326,29 +322,26 @@ def process_query_jira(query):
                 if name in params:
                     args.append(params.get(name))
                 else:
-                    return f"Result: Error - Missing required parameter '{name}'"
+                    return f"Error: Missing required parameter '{name}'"
 
             result = func(*args)
 
-        # If the result is an error string or None, return it as an error
-        if result is None or (isinstance(result, str) and result.lower().startswith("error")):
-            return f"{result or 'Unknown error occurred.'}"
-
-        return " Operation completed successfully"
+        return "Operation completed successfully"
 
     except Exception as e:
         return f"Error executing function {function_name}: {str(e)}"
 
 
-# if __name__ == "__main__":
-#     print("Welcome to the Jira Assistant!")
-#     print("You can ask queries in natural language to interact with Jira.")
-#     print("Type 'exit' to quit.")
+
+if __name__ == "__main__":
+    print("Welcome to the Jira Assistant!")
+    print("You can ask queries in natural language to interact with Jira.")
+    print("Type 'exit' to quit.")
     
-#     while True:
-#         query = input("\nEnter your query: ")
-#         if query.lower() in ['exit', 'quit']:
-#             break
+    while True:
+        query = input("\nEnter your query: ")
+        if query.lower() in ['exit', 'quit']:
+            break
         
-#         result = process_query_jira(query)
-#         print("\nResult:", result)
+        result = process_query_jira(query)
+        print("\nResult:", result)

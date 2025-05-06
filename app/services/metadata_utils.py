@@ -1,5 +1,7 @@
-import os
+# metadata_utils.py
+
 import json
+import os
 
 # Path to the JSON file
 JSON_PATH = "project_metadata.json"
@@ -31,24 +33,27 @@ def update_project_metadata(project):
     }
     save_metadata(data)
 
-# UPDATED FUNCTION: Now includes description
-def store_issue_metadata(project_key, issue_key, summary, description=""):
+def store_issue_metadata(project_key, issue_key, summary):
     """Store issue metadata in a JSON file under the corresponding project."""
-    data = load_metadata()
+    # Load the existing data
+    if os.path.exists(JSON_PATH):
+        with open(JSON_PATH, 'r') as file:
+            data = json.load(file)
+    else:
+        data = {}
 
     # Ensure the project exists in the data
     if project_key not in data:
         data[project_key] = {"name": "", "key": project_key, "issues": []}
     
     # Add the new issue metadata to the issues list
-    issue_data = {
-        "issue_key": issue_key,
-        "summary": summary,
-        "description": description  # new field added
-    }
+    issue_data = {"issue_key": issue_key, "summary": summary}
     data[project_key]["issues"].append(issue_data)
 
-    save_metadata(data)
+    # Save the updated data back to the file
+    with open(JSON_PATH, 'w') as file:
+        json.dump(data, file, indent=4)
+
 
 # Get project key by its name
 def get_project_key_by_name(name):

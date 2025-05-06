@@ -5,15 +5,16 @@ import requests
 import json
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from groq import Groq
-from ..services.git_app import process_query
-from ..services.jira_app import process_query_jira
-from ..celery_app import celery_app
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+from app.services.git_app import process_query
+from app.services.jira_app import process_query_jira
+from app.celery_app import celery_app  # Import Celery app
 
 # Load environment variables
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_API_URL = os.getenv("BASE_API_URL", "http://web:8000")
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
 logging.basicConfig(
@@ -23,14 +24,14 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("TaskProcessor")
 
-# Initialize Groq client
-client = Groq(api_key=GROQ_API_KEY)
 
 class TaskProcessor:
     def __init__(self):
-        pass
+        self.check_interval = 10  # seconds
+        # Log the API URL being used
+        logger.info(f"Task Processor initialized with API URL: {BASE_API_URL}")
 
     def fetch_pending_tasks(self, task_type):
         """Fetch all pending tasks of a specific type (git or jira)"""
@@ -54,7 +55,7 @@ class TaskProcessor:
             
             # Call your existing GitHub process function
             response = process_query(combined_input)
-            logger.debug(f"Git task response: {response}")
+            print(response)          
             return response
         
         except Exception as e:
@@ -75,7 +76,7 @@ class TaskProcessor:
             
             # Call your existing Jira process function
             response = process_query_jira(combined_input)
-            logger.debug(f"Jira task response: {response}")
+            print(response)
             return response
         
         except Exception as e:
@@ -88,45 +89,52 @@ class TaskProcessor:
             return json.dumps(error_response)
 
     def analyze_response(self, task_type, response_text):
-        """Analyze the response from the API call using LLM to determine status"""
-        global client
-        if not client:
-            client = Groq(api_key=GROQ_API_KEY)
+        """
+        Use a ChatGroq LLM to Analyze the response to determine status
+        """
+        if not os.getenv("GROQ_API_KEY"):
+            logger.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+            return "analyze_error"
 
         try:
-            prompt = f"""
-            Analyze the following {task_type} API response and determine if the operation was successful or resulted in an error.
-            
-            Response: {response_text}
-            
-            Return ONLY one of the following status values:
-            - "completed" if the operation was successful
-            - "failed" if there was an error
-            - "pending" if the status is unclear
-            
-            Status:
-            """
-            
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10
+            llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+            analysis_prompt = PromptTemplate(
+                template="""
+                    Analyze the following {task_type} API response and determine if the operation was successful or resulted in an error.
+                    
+                    Response: {response}
+                    
+                    Return ONLY one of the following status values:
+                    - "completed" if the operation was successful
+                    - "failed" if there was an error
+                    - "pending" if the status is unclear
+                    
+                    Status:""",
+                input_variables=["task_type", "response"],
+            )
+                
+            formatted_prompt = analysis_prompt.format(
+                task_type=task_type,
+                response=response_text
             )
             
-            analysis_result = response.choices[0].message.content.strip().lower()
+            response = llm.invoke(formatted_prompt)
+            status = response.content.strip().lower()
             
-            # Normalize the result
-            if "completed" in analysis_result or "success" in analysis_result:
-                return "successful"
-            elif "failed" in analysis_result or "error" in analysis_result:
-                return "failed"
-            else:
-                logger.warning(f"LLM analysis returned unclear status: {analysis_result}. Defaulting to 'pending'.")
+            # Validate the response matches expected values
+            valid_statuses = {"completed", "failed", "pending"}
+            if status not in valid_statuses:
+                logger.warning(f"Unexpected status '{status}' from LLM, defaulting to 'pending'")
                 return "pending"
                 
+            # Map "completed" to "successful" for consistency with existing code
+            if status == "completed":
+                return "successful"
+                
+            return status
+
         except Exception as e:
-            logger.error(f"Error analyzing response with LLM: {e}")
+            logger.error(f"Error analyzing response with LLM: {e}", exc_info=True)
             return "pending"  # Default to pending if analysis fails
 
     def update_task_status(self, task_type, task_id, status, reply):
@@ -145,7 +153,7 @@ class TaskProcessor:
             current_task["completion_date"] = datetime.now(timezone.utc).isoformat()
 
             # Log the task before updating
-            logger.info(f"Updating {task_type} task {task_id} with status: {status}")
+            logger.info(f"Updating task {task_id} with status: {status}")
 
             # Send update request
             update_response = requests.put(endpoint, json=current_task)
@@ -155,8 +163,7 @@ class TaskProcessor:
             return True
             
         except Exception as e:
-            logger.error(f"Error updating {task_type} task {task_id} to status {status}: {e}")
-            logger.debug(f"Update payload for task {task_id}: {current_task}")
+            logger.error(f"Error updating {task_type} task {task_id}: {e}")
             return False
 
     def process_all_tasks(self):
@@ -165,9 +172,6 @@ class TaskProcessor:
         git_tasks = self.fetch_pending_tasks("git")
         for task in git_tasks:
             task_id = task.get("git_task_id")
-            if not task_id:
-                logger.warning(f"Skipping Git task with missing ID: {task}")
-                continue
             title = task.get("title", "")
             description = task.get("description", "")
             
@@ -184,9 +188,6 @@ class TaskProcessor:
         jira_tasks = self.fetch_pending_tasks("jira")
         for task in jira_tasks:
             task_id = task.get("jira_task_id")
-            if not task_id:
-                logger.warning(f"Skipping Jira task with missing ID: {task}")
-                continue
             title = task.get("title", "")
             description = task.get("description", "")
             
@@ -199,14 +200,24 @@ class TaskProcessor:
             # Update task status
             self.update_task_status("jira", task_id, status, response)
 
+        return f"Processed {len(git_tasks)} Git tasks and {len(jira_tasks)} Jira tasks"
 
+    def run(self):
+        """Run the task processor continuously"""
+        logger.info("Starting Task Processor")
+        while True:
+            try:
+                self.process_all_tasks()
+            except Exception as e:
+                logger.error(f"Error in main processing loop: {e}")
+            
+            # Sleep before checking again
+            time.sleep(self.check_interval)
+
+
+# Create a Celery task to process Git and Jira tasks
 @celery_app.task(name='app.listeners.git_jira.process_git_jira_tasks')
 def process_git_jira_tasks():
-    """Celery task to process pending Git and Jira tasks."""
-    logger.info("Running Git/Jira task processor task...")
-    try:
-        processor = TaskProcessor()
-        processor.process_all_tasks()
-        logger.info("Git/Jira task processing finished.")
-    except Exception as e:
-        logger.error(f"Unhandled error in process_git_jira_tasks: {e}", exc_info=True)
+    """Celery task to process Git and Jira tasks"""
+    processor = TaskProcessor()
+    return processor.process_all_tasks()
