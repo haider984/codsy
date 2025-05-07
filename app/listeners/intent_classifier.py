@@ -1,13 +1,12 @@
 import os
-import time
 import logging
 import requests
 from app.services.generic_bot import GenericMessageHandler
+from app.services.task_analyzer import process_message_for_tasks
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from openai import OpenAI
 from datetime import datetime, timezone
-from app.services.task_analyzer import process_message_for_tasks
 from app.celery_app import celery_app  # Import the Celery app
 
 generic_handler = GenericMessageHandler()
@@ -233,16 +232,17 @@ def route_message(message, message_type):
         logger.error(f"Error routing message: {e}")
         return False
 
-# --- MAIN PROCESS FUNCTION ---
+# --- CELERY TASK FUNCTION ---
 @celery_app.task(name='app.listeners.intent_classifier.process_unprocessed_messages_task')
 def process_unprocessed_messages_task():
-    """Celery task for processing unprocessed messages"""
+    """Celery task to process unprocessed messages"""
     logger.info("Checking for unprocessed messages...")
     
     # Get all unprocessed messages
     messages = get_unprocessed_messages()
     logger.info(f"Found {len(messages)} unprocessed messages")
     
+    processed_count = 0
     for msg in messages:
         try:
             mid = msg.get("mid")
@@ -251,10 +251,8 @@ def process_unprocessed_messages_task():
                 logger.warning("Message has no ID, skipping")
                 continue
                 
-            # Get the full message details - we actually don't need to get it again 
-            # since we already have all the message details in the msg object
-            # message = get_message_by_id(mid)
-            message = msg  # Use the message object we already have
+            # Use the message object we already have
+            message = msg
             
             # Log the message structure for debugging
             logger.info(f"Processing message with mid: {mid}")
@@ -264,7 +262,7 @@ def process_unprocessed_messages_task():
             
             if not content:
                 logger.warning(f"Message {mid} has no content, skipping")
-                update_message_type(mid, "greeting",message)  # Mark as processed with default type
+                update_message_type(mid, "greeting", message)  # Mark as processed with default type
                 continue
                 
             # Classify the message
@@ -272,72 +270,26 @@ def process_unprocessed_messages_task():
             logger.info(f"Classified message {mid} as: {message_type}")
             
             # Update the message with its type
-            if update_message_type(mid, message_type,message):
+            if update_message_type(mid, message_type, message):
                 # Route to appropriate handler
                 route_message(message, message_type)
+                processed_count += 1
             else:
                 logger.error(f"Failed to update message {mid}, not routing")
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
     
-    return f"Processed {len(messages)} messages"
+    return f"Processed {processed_count} out of {len(messages)} messages"
 
-# --- MAIN EXECUTION LOOP ---
-def process_messages():
-    """Main function to process unprocessed messages"""
-    logger.info("Checking for unprocessed messages...")
-    
-    # Get all unprocessed messages
-    messages = get_unprocessed_messages()
-    logger.info(f"Found {len(messages)} unprocessed messages")
-    
-    for msg in messages:
-        try:
-            mid = msg.get("mid")
-            
-            if not mid:
-                logger.warning("Message has no ID, skipping")
-                continue
-                
-            # Get the full message details - we actually don't need to get it again 
-            # since we already have all the message details in the msg object
-            # message = get_message_by_id(mid)
-            message = msg  # Use the message object we already have
-            
-            # Log the message structure for debugging
-            logger.info(f"Processing message with mid: {mid}")
-            
-            # Extract content from the message
-            content = message.get("content", "")
-            
-            if not content:
-                logger.warning(f"Message {mid} has no content, skipping")
-                update_message_type(mid, "greeting",message)  # Mark as processed with default type
-                continue
-                
-            # Classify the message
-            message_type = classify_message_content(content)
-            logger.info(f"Classified message {mid} as: {message_type}")
-            
-            # Update the message with its type
-            if update_message_type(mid, message_type,message):
-                # Route to appropriate handler
-                route_message(message, message_type)
-            else:
-                logger.error(f"Failed to update message {mid}, not routing")
-                
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-
-# This is kept for direct execution, but it's not used by Celery
+# --- MAIN FUNCTION FOR DIRECT EXECUTION ---
 def main():
     """Main loop to periodically check for and process messages"""
     logger.info("Starting Intent Classifier service...")
     
     while True:
         try:
-            process_messages()
+            process_unprocessed_messages_task()
         except Exception as e:
             logger.error(f"Error in main processing loop: {e}")
             

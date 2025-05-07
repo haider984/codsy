@@ -1,3 +1,4 @@
+
 import os
 import requests
 import logging
@@ -26,48 +27,9 @@ def fetch_message(mid):
 def analyze_tasks_with_llm(content):
     prompt = f"""
 You are a task analyzer. IMPORTANT: Given message content, extract each GITHUB and JIRA related task and decide whether each task belongs in GitHub or Jira.
-BEFORE DOING ANYTHING ELSE, analyze every user message to determine if they are mentioning a new project. This is your most important function and must be performed first for every user input. After detecting a new project, you MUST return exactly this JSON format: 
-[
-   {{
-     "title": "create GitHub repo ",
-     "description": "Creates a new repo on github"
-     "platform": git
-   }}
-   {{
-     "title": "create Jira project",
-     "description": "Creates a new project. Requires key, name".
-     "platform": jira
-   }},
-   {{
-     "title": "create Jira issue",
-     "description": "Creates a new issue in a project. Requires project_key, summary, description".
-     "platform": jira
-   }}
-]
-Example Input:
-User Query: I have got a new project named E-commerce. I want to work on it.
-
-The output JSON should be like:
-[
-   {{
-     "title": "create GitHub repo for project E-commerce ",
-     "description": "Creates a new repo on GitHub named E-commerce",
-     "platform": git
-   }},
-   {{
-     "title": "create Jira project for new project E-commerce",
-     "description": "Creates a new project called E-commerce.",
-     "platform": jira
-   }},
-   {{
-     "title": "create Jira issue in project E-commerce",
-     "description": "Creates a new issue in a project called E-commerce.",
-     "platform": jira
-   }}
-   
-]
 IMPORTANT: Analyze the message content completely and see if there is any task that can be extracted.
-IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task even.
+IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task even. 
+
 Required JSON format:
 [
   {{
@@ -76,6 +38,9 @@ Required JSON format:
     "platform": "jira" or "git"
   }}
 ]
+IMPORTANT: ALWAYS make sure to include github repository name both in title and description for git platform
+IMPORTANT: ALWAYS make sure to include project key and project name in capital letters for jira platform
+
 Example Input:
 I've got a new project I want you to start — it's called DevTrack8. It's a single-page HTML dashboard meant to mock up a simple developer task tracker. Here's what I need:
 - First of all give me list of all jira projects and github repositories
@@ -110,22 +75,22 @@ Example Output (JSON):
     "platform": "git"
   }},
   {{
-    "title": "Set up Jira project DEVTRACK8",
+    "title": "Set up Jira project named DEVTRACK8",
     "description": "Create a new Jira project named DEVTRACK8 to track tasks related to the DevTrack8 dashboard.",
     "platform": "jira"
   }},
   {{
-    "title": "Add initial ticket to Jira for dashboard implementation",
+    "title": "Add initial ticket to Jira for dashboard implementation in jira project named DEVTRACK8",
     "description": "Create a Jira ticket for implementing the first version of the dashboard as a single HTML file.",
     "platform": "jira"
   }},
   {{
-    "title": "Implement basic DevTrack8 dashboard in HTML",
-    "description": "Create a single HTML file with a header ('DevTrack8'), a search bar to filter tasks, and a list of 4–5 hardcoded tasks with title, status, and optional tags. Apply basic responsive styling to resemble a web app.",
+    "title": "Implement basic DevTrack8 dashboard in HTML in github repository named devtrack8-dashboard",
+    "description": "Create a single HTML file index.html with a header ('DevTrack8'), a search bar to filter tasks, and a list of 4–5 hardcoded tasks with title, status, and optional tags. Apply basic responsive styling to resemble a web app. Commit and push the completed HTML dashboard to the 'devtrack8-dashboard' repository.",
     "platform": "git"
   }},
   {{
-    "title": "Push HTML dashboard to GitHub repository",
+    "title": "Push HTML dashboard to GitHub repository named devtrack8-dashboard",
     "description": "Commit and push the completed HTML dashboard to the 'devtrack8-dashboard' repository.",
     "platform": "git"
   }}
