@@ -7,7 +7,6 @@ import re
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
-
 from dotenv import load_dotenv
 from app.celery_app import celery_app  # Import the Celery app
 
@@ -340,20 +339,17 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
 
 
 
-# ─── POLL INBOX ─────────────────────────────────────────────────────────────────
+# ─── POLL INBOX TASK ─────────────────────────────────────────────────────────────────
 
-# Create a Celery task for poll_inbox
 @celery_app.task(name='app.listeners.email.poll_inbox_task')
 def poll_inbox_task():
     """
-    Celery task that checks for unread emails and processes them.
-    This is a single run version of the original poll_inbox function.
+    Celery task to check for unread emails, process them, and mark as read.
+    Will be scheduled to run periodically by Celery Beat.
     """
+    seen_ids = getattr(poll_inbox_task, 'seen_ids', set())
+
     try:
-        # Reuse the seen_ids set across task runs
-        if not hasattr(poll_inbox_task, 'seen_ids'):
-            poll_inbox_task.seen_ids = set()
-        
         token = get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
         url = f"{GRAPH_API}/users/{USER_EMAIL}/mailFolders/inbox/messages?$filter=isRead eq false"
@@ -364,9 +360,9 @@ def poll_inbox_task():
 
         for msg in messages:
             msg_id = msg["id"]
-            if msg_id in poll_inbox_task.seen_ids:
+            if msg_id in seen_ids:
                 continue
-            poll_inbox_task.seen_ids.add(msg_id)
+            seen_ids.add(msg_id)
 
             sender = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
             subject = msg.get("subject", "")
@@ -395,65 +391,21 @@ def poll_inbox_task():
 
             mark_email_as_read(token, msg_id)
 
-        # Keep seen_ids from growing too large
-        if len(poll_inbox_task.seen_ids) > 5000:
-            poll_inbox_task.seen_ids = set(list(poll_inbox_task.seen_ids)[-2500:])
+        # Prune the seen_ids set if it gets too large
+        if len(seen_ids) > 5000:
+            seen_ids = set(list(seen_ids)[-2500:])
             
+        # Store the updated seen_ids for the next run
+        poll_inbox_task.seen_ids = seen_ids
+        
     except Exception as e:
         logger.error(f"Error during polling: {e}")
         
-    return f"Processed {len(messages)} messages"
+    return f"Processed {len(messages)} emails"
 
-# Keep the original function for direct Python execution
+# Original function maintained for backward compatibility or manual runs
 def poll_inbox():
-    seen_ids = set()
+    """Legacy function that runs the polling in an infinite loop"""
     while True:
-        try:
-            token = get_access_token()
-            headers = {"Authorization": f"Bearer {token}"}
-            url = f"{GRAPH_API}/users/{USER_EMAIL}/mailFolders/inbox/messages?$filter=isRead eq false"
-            resp = requests.get(url, headers=headers)
-            resp.raise_for_status()
-            messages = resp.json().get('value', [])
-            logger.info(f"Found {len(messages)} unread messages.")
-
-            for msg in messages:
-                msg_id = msg["id"]
-                if msg_id in seen_ids:
-                    continue
-                seen_ids.add(msg_id)
-
-                sender = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
-                subject = msg.get("subject", "")
-                body_preview = msg.get("bodyPreview", "")
-                html_body    = msg.get("body", {}).get("content", "")
-                conversation_id = msg.get("conversationId")
-
-                logger.info(f"New Email from {sender}, Subject: {subject}")
-
-                mid = create_message_in_db(sender, subject, body_preview, msg_id)
-                if not mid:
-                    logger.error(f"Failed to create message in DB for msg_id: {msg_id}")
-                    continue
-                classification = classify_email_with_llm(html_body)
-                logger.info(f"Email classified as: {classification}")
-
-                if classification == "meeting":
-                    meeting_url, meeting_id, passcode = extract_meeting_details_bs(html_body)
-                    if meeting_url != "Not Found":
-                        start_time = datetime.now(timezone.utc).isoformat()
-                        end_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-
-                        create_meeting_in_db(sender, meeting_url, meeting_id, passcode, start_time, end_time, mid)
-                    else:
-                        logger.warning(f"Meeting details not found for email: {subject}")
-
-                mark_email_as_read(token, msg_id)
-
-            if len(seen_ids) > 5000:
-                seen_ids = set(list(seen_ids)[-2500:]) 
-
-        except Exception as e:
-            logger.error(f"Error during polling: {e}")
-
+        poll_inbox_task()
         time.sleep(10)
