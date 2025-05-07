@@ -150,22 +150,22 @@ services:
       - web # Depends on the API service being available
     restart: always
 
-  # # ---- GIT/JIRA WORKER SERVICE ----
-  # git_jira_worker: # Worker service for the git/jira task execution queue
-  #   build: .
-  #   command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
-  #   volumes:
-  #     - ./app:/app/app
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://redis:6379/0
-  #     - INTERNAL_BASE_API_URL=http://web:8000
-  #     # Add specific GITHUB/JIRA/GROQ keys if needed and not in .env
-  #   depends_on:
-  #     - redis
-  #     - web
-  #   restart: always
+  # ---- GIT/JIRA WORKER SERVICE ----
+  git_jira_worker: # Worker service for the git/jira task execution queue
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - INTERNAL_BASE_API_URL=http://web:8000
+      # Add specific GITHUB/JIRA/GROQ keys if needed and not in .env
+    depends_on:
+      - redis
+      - web
+    restart: always
 
   # # ---- REPLY GIT/JIRA WORKER SERVICE ----
   # reply_git_jira_worker: # New worker service for the reply generation queue

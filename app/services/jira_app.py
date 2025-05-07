@@ -253,9 +253,9 @@ def generate_unique_project_key(base_key, json_path):
     if os.path.exists(json_path):
         with open(json_path, 'r') as f:
             data = json.load(f)
-        existing_keys = set(data.keys())
+        existing_keys = set(k.upper() for k in data.keys())
     else:
-        existing_keys = set()
+        existing_keys = set(k.upper() for k in data.keys())
 
     while key in existing_keys:
         key = f"{base_key}{suffix}"
@@ -333,15 +333,15 @@ def process_query_jira(query):
 
 
 
-if __name__ == "__main__":
-    print("Welcome to the Jira Assistant!")
-    print("You can ask queries in natural language to interact with Jira.")
-    print("Type 'exit' to quit.")
+# if __name__ == "__main__":
+#     print("Welcome to the Jira Assistant!")
+#     print("You can ask queries in natural language to interact with Jira.")
+#     print("Type 'exit' to quit.")
     
-    while True:
-        query = input("\nEnter your query: ")
-        if query.lower() in ['exit', 'quit']:
-            break
+#     while True:
+#         query = input("\nEnter your query: ")
+#         if query.lower() in ['exit', 'quit']:
+#             break
         
-        result = process_query_jira(query)
-        print("\nResult:", result)
+#         result = process_query_jira(query)
+#         print("\nResult:", result)

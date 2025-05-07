@@ -1,5 +1,4 @@
 import os
-import time
 import logging
 import requests
 import json
@@ -9,7 +8,7 @@ from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from app.services.git_app import process_query
 from app.services.jira_app import process_query_jira
-from app.celery_app import celery_app  # Import Celery app
+from app.celery_app import celery_app  # Import the Celery app
 
 # Load environment variables
 load_dotenv()
@@ -30,8 +29,6 @@ logger = logging.getLogger("TaskProcessor")
 class TaskProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
-        # Log the API URL being used
-        logger.info(f"Task Processor initialized with API URL: {BASE_API_URL}")
 
     def fetch_pending_tasks(self, task_type):
         """Fetch all pending tasks of a specific type (git or jira)"""
@@ -129,7 +126,7 @@ class TaskProcessor:
                 
             # Map "completed" to "successful" for consistency with existing code
             if status == "completed":
-                return "successful"
+                return "processed"
                 
             return status
 
@@ -168,6 +165,8 @@ class TaskProcessor:
 
     def process_all_tasks(self):
         """Process all pending Git and Jira tasks"""
+        processed_count = 0
+        
         # Process Git tasks
         git_tasks = self.fetch_pending_tasks("git")
         for task in git_tasks:
@@ -182,7 +181,8 @@ class TaskProcessor:
             status = self.analyze_response("git", response)
             
             # Update task status
-            self.update_task_status("git", task_id, status, response)
+            if self.update_task_status("git", task_id, status, response):
+                processed_count += 1
         
         # Process Jira tasks
         jira_tasks = self.fetch_pending_tasks("jira")
@@ -198,26 +198,37 @@ class TaskProcessor:
             status = self.analyze_response("jira", response)
             
             # Update task status
-            self.update_task_status("jira", task_id, status, response)
+            if self.update_task_status("jira", task_id, status, response):
+                processed_count += 1
+        
+        return processed_count
 
-        return f"Processed {len(git_tasks)} Git tasks and {len(jira_tasks)} Jira tasks"
+# Create an instance of the task processor
+processor = TaskProcessor()
 
-    def run(self):
-        """Run the task processor continuously"""
-        logger.info("Starting Task Processor")
-        while True:
-            try:
-                self.process_all_tasks()
-            except Exception as e:
-                logger.error(f"Error in main processing loop: {e}")
-            
-            # Sleep before checking again
-            time.sleep(self.check_interval)
-
-
-# Create a Celery task to process Git and Jira tasks
+# Create the Celery task
 @celery_app.task(name='app.listeners.git_jira.process_git_jira_tasks')
 def process_git_jira_tasks():
-    """Celery task to process Git and Jira tasks"""
-    processor = TaskProcessor()
-    return processor.process_all_tasks()
+    """Celery task that processes all pending Git and Jira tasks"""
+    try:
+        processed_count = processor.process_all_tasks()
+        logger.info(f"Processed {processed_count} tasks")
+        return f"Processed {processed_count} Git/Jira tasks"
+    except Exception as e:
+        logger.error(f"Error in process_git_jira_tasks: {e}")
+        return f"Error processing Git/Jira tasks: {e}"
+
+# For direct script execution
+def main():
+    """Main function when running the script directly"""
+    logger.info("Starting Task Processor")
+    
+    while True:
+        try:
+            process_git_jira_tasks()
+        except Exception as e:
+            logger.error(f"Error in main processing loop: {e}")
+        
+        # Sleep before checking again (for direct script execution only)
+        import time
+        time.sleep(processor.check_interval)

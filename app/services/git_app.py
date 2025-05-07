@@ -129,15 +129,15 @@ def identify_function(query):
     function_list = "\n".join([f"- {name}: {desc}" for name, desc in function_descriptions.items()])
 
     prompt = f"""
-Based on the following functions available for GitHub interaction, identify the SINGLE most appropriate function to call based on the user query.
+        Based on the following functions available for GitHub interaction, identify the SINGLE most appropriate function to call based on the user query.
 
-Available functions:
-{function_list}
+        Available functions:
+        {function_list}
 
-User query: "{query}"
+        User query: "{query}"
 
-Return ONLY the function name, nothing else. Just the function name as a single word.
-"""
+        Return ONLY the function name, nothing else. Just the function name as a single word.
+        """
 
     try:
         response = client.chat.completions.create(
@@ -181,22 +181,25 @@ def extract_parameters(func_name, query):
     # Create a prompt for Groq to extract parameters
     param_list = ", ".join(required_params)
     prompt = f"""
-Extract the following parameters from the user query: {param_list}
+        Analyze the user query completely and then Extract the following parameters from the user query: {param_list}
 
-User query: "{query}"
+        User query: "{query}"
+        IMPORTANT: In query analyze the repository name parameter 
 
-Return ONLY a JSON object with the parameter names as keys and extracted values as values.
-If a parameter is not found in the query, set its value to null or a reasonable default.
-If there is any "labels" parameter, transform spaces to underscores (e.g., "very low" to "very_low").
+        For example: if user query  is "now change the code of of index.html file and add a new page for colors generation and push changes to github repo named finaltest" then the repo_name parameter is finaltest.
 
-Example response format:
-```json
-{{
-    "param1": "value1",
-    "param2": "value2"
-}}
-```
-"""
+        Return ONLY a JSON object with the parameter names as keys and extracted values as values.
+        If a parameter is not found in the query, set its value to null or a reasonable default.
+        If there is any "labels" parameter, transform spaces to underscores (e.g., "very low" to "very_low").
+
+        Example response format:
+        ```json
+        {{
+            "param1": "value1",
+            "param2": "value2"
+        }}
+        ```
+        """
 
     try:
         response = client.chat.completions.create(

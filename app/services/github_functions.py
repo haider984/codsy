@@ -726,6 +726,7 @@ def generate_code(request_prompt):
             template=""" "You are an expert programmer. Write clean, concise, and correct code based on the user's instructions. "
             "Your response must include only the final code — no explanations, no formatting tags, no extra words, "
             "and no quotation marks. Do not mention the programming language. Just output the code."
+            ""
 
             User query: {request_prompt}""",
         input_variables=["request_prompt"],
@@ -879,8 +880,10 @@ def generate_and_push_code(repo_name: str,
                            branch_name: str = "main"):
     
     """"You are a GitHub automation agent. "
-    "When writing code into files, output **only** the code content—no extra text, comments, or instructions. "
+    "When writing code into files, oulytput **on** the code content—no extra text, comments, or instructions. "
     "Use the available function tools (`write_code_to_file`, `commit_changes`, `push_changes`) to save, commit, and push.
+    "IMPORTANT: The output must ALWAYS be a single .html file with all HTML, CSS, JavaScript, and assets fully contained.
+    Do not use any external libraries or files."
     """
 
     # 1) Generate the code
@@ -949,28 +952,24 @@ def intelligent_code_modifier(current_code: str, instruction: str) -> str:
         logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
         return "identify_function_error"
     
-    system_prompt = (
+    try:
+        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5) # Using known good model, adjust temp
+        prompt = PromptTemplate(
+            template = """
         "You are an expert programmer and code refiner."
         "Analyze the provided code and modify it according to the instruction."
         " Output ONLY valid executable code. DO NOT explain anything. "
         "DO NOT describe your process. DO NOT add quotation marks, formatting, language identifiers, or any human text."
-    
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"Here is the current code:\n```python\n{current_code}\n```\n"
-            f"Modify it as per the following instruction:\n{instruction}\n"
-            f"Provide only the final updated code."
-        )}
-    ]
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            temperature=0.7
+        Here is the current code:{current_code}
+        Modify it as per the following instruction:{instruction}
+        Provide only the final updated code.""",
+        input_variables=["current_code", instruction],
         )
-        return response.choices[0].message.content.strip()
+
+
+        formatted_prompt = prompt.format(current_code=current_code,instruction=instruction )
+        response = llm.generate(formatted_prompt)
+        return  response.content.strip().lower()
 
     except Exception as e:
         return f"<!-- Error from Groq LLM: {str(e)} -->\n\n{current_code}"
