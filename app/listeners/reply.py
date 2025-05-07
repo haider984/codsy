@@ -100,27 +100,20 @@ def get_message_by_mid(mid):
 def update_status(mid, original_message):
     """Update the message status to successful in DB"""
     try:
-        payload = {
-            "sid": original_message["sid"],
-            "uid": original_message["uid"],
-            "pid": original_message["pid"],
-            "username": original_message["username"],
-            "content": original_message["content"],
-            "message_datetime": original_message.get("message_datetime", datetime.now(timezone.utc).isoformat()),
-            "source": original_message["source"],
-            "msg_id": original_message.get("msg_id", ""),
-            "channel": original_message.get("channel", ""),
-            "thread_ts": original_message.get("thread_ts", ""),
-            "message_type": original_message.get("message_type", ""),
-            "processed": True,  # Assuming the message is processed
-            "status": "successful"
-        }
-
-        print(f"Updating message {mid} with payload: {payload}")
-        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=payload)
+        # Get the current message data to ensure we have all fields
+        url = f"{BASE_API_URL}/api/v1/messages/{mid}"
+        get_response = requests.get(url)
+        get_response.raise_for_status()
+        message_data = get_response.json()
+        
+        # Just update the status field
+        message_data["status"] = "successful"
+        
+        # Send the update
+        response = requests.put(url, json=message_data)
 
         if response.status_code == 200:
-            print(f"✅ Successfully updated message {mid}")
+            print(f"✅ Successfully updated message {mid} to successful")
             return True
         else:
             print(f"❌ Failed to update message {mid}: {response.status_code} {response.text}")

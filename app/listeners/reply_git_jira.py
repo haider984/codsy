@@ -32,8 +32,12 @@ class MidMessageProcessor:
             response = requests.get(f"{BASE_API_URL}/api/v1/messages/by_status/?status=processed")
             response.raise_for_status()
             messages = response.json()
-            logger.info(f"Fetched {len(messages)} messages with 'processed' status.")
-            return messages
+            
+            # Filter out messages that already have replies to avoid reprocessing
+            messages_without_replies = [msg for msg in messages if not msg.get("reply")]
+            
+            logger.info(f"Fetched {len(messages)} messages with 'processed' status, {len(messages_without_replies)} need replies.")
+            return messages_without_replies
         except Exception as e:
             logger.error(f"Error fetching messages to process: {e}")
             return []
@@ -72,12 +76,47 @@ class MidMessageProcessor:
             if all_tasks and all(task.get("reply") for task in all_tasks):
                 logger.info(f"All replies ready for message ID {mid}")
                 
-                # Update all task statuses to successful
+                # Update task statuses directly here instead of calling update_task_status
                 for task in git_tasks:
-                    self.update_task_status(task, "git")
+                    try:
+                        task_id = task.get("git_task_id")
+                        url = f"{BASE_API_URL}/api/v1/gittasks/{task_id}"
+                        
+                        # Get current task data
+                        get_response = requests.get(url)
+                        get_response.raise_for_status()
+                        task_data = get_response.json()
+                        
+                        # Update status
+                        task_data["status"] = "successful"
+                        
+                        # Update task
+                        update_response = requests.put(url, json=task_data)
+                        update_response.raise_for_status()
+                        logger.info(f"Successfully updated git task {task_id} to successful")
+                    except Exception as e:
+                        logger.error(f"Error updating git task {task_id}: {e}")
+                
                 for task in jira_tasks:
-                    self.update_task_status(task, "jira")
-                    
+                    try:
+                        task_id = task.get("jira_task_id")
+                        url = f"{BASE_API_URL}/api/v1/jiratasks/{task_id}"
+                        
+                        # Get current task data
+                        get_response = requests.get(url)
+                        get_response.raise_for_status()
+                        task_data = get_response.json()
+                        
+                        # Update status
+                        task_data["status"] = "successful"
+                        
+                        # Update task
+                        update_response = requests.put(url, json=task_data)
+                        update_response.raise_for_status()
+                        logger.info(f"Successfully updated jira task {task_id} to successful")
+                    except Exception as e:
+                        logger.error(f"Error updating jira task {task_id}: {e}")
+                
                 return all_tasks
 
             logger.info(f"Waiting for all replies... {waited}/{max_wait} seconds elapsed for MID {mid}")
@@ -137,42 +176,47 @@ class MidMessageProcessor:
             get_response.raise_for_status()
             message_data = get_response.json()
 
+            # Check if the status is already "successful" and preserve it
+            if message_data.get("status") != "successful":
+                message_data["status"] = "processed"
+            
             message_data["reply"] = reply
-            message_data["status"] = "processed"
             message_data["completion_date"] = datetime.now(timezone.utc).isoformat()
 
             update_response = requests.put(url, json=message_data)
             update_response.raise_for_status()
-            logger.info(f"Successfully updated message {mid} with reply and marked as completed")
+            logger.info(f"Message {mid} updated with reply")
             return True
         except Exception as e:
             logger.error(f"Error updating message {mid}: {e}")
             return False
 
-    def update_task_status(self, task, platform):
-        try:
-            task_id = task.get("id")
-            if platform == "git":
-                url = f"{BASE_API_URL}/api/v1/gittasks/{task_id}"
-            else:  # platform == "jira"
-                url = f"{BASE_API_URL}/api/v1/jiratasks/{task_id}"
+    # def update_task_status(self, task, platform):
+    #     try:
+    #         task_id = task.get("id")
+    #         if platform == "git":
+    #             url = f"{BASE_API_URL}/api/v1/gittasks/{task_id}"
+    #         else:  # platform == "jira"
+    #             url = f"{BASE_API_URL}/api/v1/jiratasks/{task_id}"
+
+    #         print("task_id",task_id)
                 
-            # Get current task data
-            get_response = requests.get(url)
-            get_response.raise_for_status()
-            task_data = get_response.json()
+    #         # Get current task data
+    #         get_response = requests.get(url)
+    #         get_response.raise_for_status()
+    #         task_data = get_response.json()
             
-            # Update status
-            task_data["status"] = "successful"
+    #         # Update status
+    #         task_data["status"] = "successful"
             
-            # Update task
-            update_response = requests.put(url, json=task_data)
-            update_response.raise_for_status()
-            logger.info(f"Successfully updated {platform} task {task_id} to successful")
-            return True
-        except Exception as e:
-            logger.error(f"Error updating {platform} task {task_id}: {e}")
-            return False
+    #         # Update task
+    #         update_response = requests.put(url, json=task_data)
+    #         update_response.raise_for_status()
+    #         logger.info(f"Successfully updated {platform} task {task_id} to successful")
+    #         return True
+    #     except Exception as e:
+    #         logger.error(f"Error updating {platform} task {task_id}: {e}")
+    #         return False
 
     def process_messages(self):
         messages = self.fetch_messages_to_process()
