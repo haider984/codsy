@@ -10,16 +10,16 @@ from app.celery_app import celery_app  # Import the Celery app
 
 # ——— CONFIGURATION ———
 load_dotenv()
-SLACK_BOT_TOKEN   = os.getenv("SLACK_BOT_TOKEN")
-SLACK_APP_TOKEN   = os.getenv("SLACK_APP_TOKEN")
-BASE_API_URL  = os.getenv("BASE_API_URL")
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
+BASE_API_URL = os.getenv("BASE_API_URL")
 # ——— LOGGER + SLACK INIT ———
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
 
-def create_message_in_db(username, text, msg_ts, channel_id):
+def create_message_in_db(username,text, msg_ts, channel_id):
     sid = "680f69cc5c250a63d068bbec"  # Static for now
     uid = "680f69605c250a63d068bbeb"
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
@@ -52,6 +52,7 @@ def create_message_in_db(username, text, msg_ts, channel_id):
     except Exception as e:
         logger.error(f"Error posting message to DB: {e}")
 
+        
 @app.event("message")
 def handle_message_events(event, say):
     user = event.get("user")
@@ -96,33 +97,23 @@ def handle_app_mention(event, say):
     logger.info(f"Mention by {user}: {stripped}")
 
     # Save message to DB
-    create_message_in_db(user, stripped or text, ts, channel_id)
+    create_message_in_db(stripped or text, ts, channel_id)
 
 
-# Create a Celery task for running the Slack socket listener
-@celery_app.task(name='app.listeners.slack.process_slack_message_task')
-def process_slack_message_task():
+@celery_app.task(name='app.listeners.slack.run_slack_listener')
+def run_slack_listener():
     """
-    Celery task that starts the Slack socket mode handler and keeps it running.
-    This task runs continuously, maintaining the WebSocket connection to Slack.
+    Celery task to start the Slack socket mode handler.
+    This is a long-running task that will block until the connection is closed.
     """
-    logger.info("Starting Slack Listener Bot via Celery task...")
+    logger.info("Starting Slack Listener Bot from Celery task...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    try:
-        # This will block until the connection is closed
-        handler.start()
-        # This line will only be reached if handler.start() exits
-        logger.info("Slack Listener Bot has stopped")
-    except Exception as e:
-        logger.error(f"Error in Slack Listener: {e}")
-        # Re-raise to let Celery handle the error
-        raise
-    
-    return "Slack Listener completed"
+    handler.start()
+    # This is a blocking call - the task will remain active as long as the socket connection is open
 
 
 # ——— ENTRY POINT ———
 if __name__ == "__main__":
-    logger.info("Starting Slack Listener Bot directly (not as Celery task)...")
+    logger.info("Starting Slack Listener Bot directly...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
