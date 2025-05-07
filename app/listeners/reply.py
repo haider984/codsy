@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from datetime import datetime, timezone
-from app.celery_app import celery_app  # Import the Celery app
+from app.celery_app import celery_app  # Import Celery app
 
 # Load environment variables
 load_dotenv()
@@ -129,86 +129,13 @@ def update_status(mid, original_message):
         print(f"❌ Exception while updating message {mid}: {e}")
         return False
 
-# Add the Celery task decorator
 @celery_app.task(name='app.listeners.reply.send_pending_replies_task')
 def send_pending_replies_task():
     """Celery task to process messages and send replies"""
     mids = get_processed_message_ids()
     print(f"🔍 Found {len(mids)} processed messages")
-
-    processed_count = 0
-    for entry in mids:
-        mid = entry.get("mid")
-        if not mid:
-            continue
-
-        message = get_message_by_mid(mid)
-        if not message:
-            continue
-
-        # Only process messages with status "processed", not those already being handled
-        if message.get("status") != "processed":
-            print(f"⚠️ Skipping message {mid} — status is not 'processed'")
-            continue
-
-        channel = message.get("channel", "").lower()
-        reply = message.get("reply")
-
-        if not reply:
-            print(f"⚠️ Skipping message {mid} — no reply content")
-            continue
-
-        # Mark message as being handled to prevent other workers from processing it
-        mark_as_handling(mid, message)
-
-        success = False
-
-        if channel == "email" and message.get("msg_id"):
-            success = reply_to_email(
-                message_id=message["msg_id"],
-                response_body=message["reply"]
-            )
-
-        elif channel == "slack" and message.get("channel_id") and message.get("thread_ts"):
-            success = send_slack_reply(
-                channel_id=message["channel_id"],
-                message_text=message["reply"],
-                thread_ts=message["thread_ts"]
-            )
-
-        else:
-            print(f"⚠️ Skipping message {mid} — unsupported channel or missing fields")
-
-        if success:
-            update_status(mid, message)
-            processed_count += 1
     
-    return f"Processed {processed_count} replies"
-
-def mark_as_handling(mid, original_message):
-    """Mark message as being handled to prevent duplicate processing"""
-    try:
-        payload = original_message.copy()
-        payload["status"] = "handling"  # Temporary status while processing
-        
-        print(f"Marking message {mid} as 'handling'")
-        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=payload)
-        
-        if response.status_code == 200:
-            print(f"✅ Successfully marked message {mid} as handling")
-            return True
-        else:
-            print(f"❌ Failed to mark message {mid}: {response.status_code} {response.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Exception while marking message {mid}: {e}")
-        return False
-
-# Keep the original process_messages function for backward compatibility
-def process_messages():
-    mids = get_processed_message_ids()
-    print(f"🔍 Found {len(mids)} processed messages")
-
+    sent_count = 0
     for entry in mids:
         mid = entry.get("mid")
         if not mid:
@@ -245,8 +172,16 @@ def process_messages():
 
         if success:
             update_status(mid, message)
+            sent_count += 1
+    
+    return f"Processed {len(mids)} messages, sent {sent_count} replies"
+
+def process_messages():
+    """Original function to process messages in a loop"""
+    return send_pending_replies_task()
 
 def main():
+    """Main function for running as a standalone script"""
     while True:
         print("🔁 Checking for new messages...")
         process_messages()
