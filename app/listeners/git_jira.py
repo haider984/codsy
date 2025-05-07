@@ -10,12 +10,7 @@ from app.services.git_app import process_query
 from app.services.jira_app import process_query_jira
 from app.celery_app import celery_app  # Import the Celery app
 
-# Load environment variables
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-BASE_API_URL = os.getenv("BASE_API_URL")
-
-# Configure logging
+# Configure logging first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,10 +20,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TaskProcessor")
 
+# Load environment variables
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+BASE_API_URL = os.getenv("BASE_API_URL")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
+
+# Verify credentials are available
+if not GITHUB_TOKEN or not GITHUB_USERNAME:
+    logger.error("GitHub credentials missing. Set GITHUB_TOKEN and GITHUB_USERNAME in .env file.")
+
 
 class TaskProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
+        self.repo_paths = {}  # Store repo paths for logging
 
     def fetch_pending_tasks(self, task_type):
         """Fetch all pending tasks of a specific type (git or jira)"""
@@ -52,7 +59,22 @@ class TaskProcessor:
             
             # Call your existing GitHub process function
             response = process_query(combined_input)
-            print(response)          
+            
+            # Try to extract repository information from the response
+            try:
+                if isinstance(response, str):
+                    response_json = json.loads(response)
+                else:
+                    response_json = response
+                
+                if isinstance(response_json, dict) and 'local_path' in response_json:
+                    repo_path = response_json['local_path']
+                    logger.info(f"🔵 REPOSITORY PATH: {os.path.abspath(repo_path)}")
+                    print(f"\n🔵 CLONED REPOSITORY PATH: {os.path.abspath(repo_path)}\n")
+                    self.repo_paths[title] = os.path.abspath(repo_path)
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+                
             return response
         
         except Exception as e:

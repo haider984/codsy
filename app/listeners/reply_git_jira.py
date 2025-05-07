@@ -2,10 +2,10 @@ import os
 import time
 import logging
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
-from app.celery_app import celery_app  # Import Celery app
+from app.celery_app import celery_app  # Import the Celery app
 
 # Load environment variables
 load_dotenv()
@@ -26,7 +26,6 @@ client = Groq(api_key=GROQ_API_KEY)
 class MidMessageProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
-        logger.info(f"MidMessageProcessor initialized with API URL: {BASE_API_URL}")
 
     def fetch_messages_to_process(self):
         try:
@@ -44,9 +43,8 @@ class MidMessageProcessor:
             url = f"{BASE_API_URL}/api/v1/gittasks/by_message/{mid}"
             response = requests.get(url)
             response.raise_for_status()
-            tasks = response.json()
-            logger.warning(f"Fetched {len(tasks)} git tasks for message ID {mid}")
-            return tasks
+            print(f"Fetched {len(response.json())} git tasks for message ID {mid}")
+            return response.json()
         
         except Exception as e:
             logger.error(f"Error fetching git tasks for message ID {mid}: {e}")
@@ -57,9 +55,8 @@ class MidMessageProcessor:
             url = f"{BASE_API_URL}/api/v1/jiratasks/by_message/{mid}"
             response = requests.get(url)
             response.raise_for_status()
-            tasks = response.json()
-            logger.warning(f"Fetched {len(tasks)} jira tasks for message ID {mid}")
-            return tasks
+            print(f"Fetched {len(response.json())} jira tasks for message ID {mid}")
+            return response.json()
         except Exception as e:
             logger.error(f"Error fetching jira tasks for message ID {mid}: {e}")
             return []
@@ -74,6 +71,13 @@ class MidMessageProcessor:
 
             if all_tasks and all(task.get("reply") for task in all_tasks):
                 logger.info(f"All replies ready for message ID {mid}")
+                
+                # Update all task statuses to successful
+                for task in git_tasks:
+                    self.update_task_status(task, "git")
+                for task in jira_tasks:
+                    self.update_task_status(task, "jira")
+                    
                 return all_tasks
 
             logger.info(f"Waiting for all replies... {waited}/{max_wait} seconds elapsed for MID {mid}")
@@ -111,6 +115,7 @@ class MidMessageProcessor:
         Final response to the user:
         """
 
+
         try:
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -125,70 +130,48 @@ class MidMessageProcessor:
             logger.error(f"Error generating summary with LLM for message {mid}: {e}")
             return "An error occurred while generating a response for your message."
 
-    def try_claim_message(self, mid):
-        """Attempt to atomically claim a message for processing"""
+    def update_message_with_reply(self, mid, reply):
         try:
             url = f"{BASE_API_URL}/api/v1/messages/{mid}"
             get_response = requests.get(url)
             get_response.raise_for_status()
             message_data = get_response.json()
-            
-            # Don't process if already claimed or completed
-            if message_data.get("status") in ["claiming", "handling", "successful"]:
-                logger.info(f"Message {mid} already has status {message_data.get('status')}, skipping")
-                return None
-                
-            # First, mark it as "claiming" to prevent other workers from claiming it
-            claim_data = message_data.copy()
-            claim_data["status"] = "claiming"
-            claim_data["claimed_at"] = datetime.now(timezone.utc).isoformat()
-            
-            # Try to update the status atomically
-            update_response = requests.put(url, json=claim_data)
-            update_response.raise_for_status()
-            
-            # Double check we actually got it
-            check_response = requests.get(url)
-            check_response.raise_for_status()
-            current_status = check_response.json().get("status")
-            
-            if current_status == "claiming":
-                logger.info(f"Successfully claimed message {mid} for processing")
-                return message_data
-            else:
-                logger.warning(f"Failed to claim message {mid}, current status: {current_status}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error claiming message {mid}: {e}")
-            return None
 
-    def update_message_with_reply(self, mid, reply, original_data):
-        try:
-            url = f"{BASE_API_URL}/api/v1/messages/{mid}"
-            
-            # Before updating, verify current status matches what we expect
-            get_response = requests.get(url)
-            get_response.raise_for_status()
-            current_data = get_response.json()
-            
-            # If someone else modified the message while we were processing, don't update
-            if current_data.get("status") != "claiming":
-                logger.warning(f"Message {mid} status changed from claiming to {current_data.get('status')}, aborting update")
-                return False
-            
-            # Create update with original data to prevent overwriting other fields
-            message_data = original_data.copy()
             message_data["reply"] = reply
-            message_data["status"] = "processed"  # Keep as "processed" for reply.py to handle
+            message_data["status"] = "processed"
             message_data["completion_date"] = datetime.now(timezone.utc).isoformat()
 
             update_response = requests.put(url, json=message_data)
             update_response.raise_for_status()
-            logger.info(f"Successfully updated message {mid} with reply and marked as processed")
+            logger.info(f"Successfully updated message {mid} with reply and marked as completed")
             return True
         except Exception as e:
             logger.error(f"Error updating message {mid}: {e}")
+            return False
+
+    def update_task_status(self, task, platform):
+        try:
+            task_id = task.get("id")
+            if platform == "git":
+                url = f"{BASE_API_URL}/api/v1/gittasks/{task_id}"
+            else:  # platform == "jira"
+                url = f"{BASE_API_URL}/api/v1/jiratasks/{task_id}"
+                
+            # Get current task data
+            get_response = requests.get(url)
+            get_response.raise_for_status()
+            task_data = get_response.json()
+            
+            # Update status
+            task_data["status"] = "successful"
+            
+            # Update task
+            update_response = requests.put(url, json=task_data)
+            update_response.raise_for_status()
+            logger.info(f"Successfully updated {platform} task {task_id} to successful")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating {platform} task {task_id}: {e}")
             return False
 
     def process_messages(self):
@@ -197,37 +180,17 @@ class MidMessageProcessor:
         
         if not messages:
             logger.info("No messages to process")
-            return f"Processed {processed_count} messages"
+            return processed_count
 
         for message in messages:
             mid = message.get("mid")
             if not mid:
                 logger.warning("Found message without MID, skipping")
                 continue
-            
-            # Skip messages that already have replies
-            if message.get("reply"):
-                logger.info(f"Message {mid} already has a reply, skipping")
-                continue
 
             logger.info(f"===== Processing message ID: {mid} =====")
 
             try:
-                # Check if there are any Git or Jira tasks for this message
-                git_tasks = self.fetch_git_tasks_for_mid(mid)
-                jira_tasks = self.fetch_jira_tasks_for_mid(mid)
-                
-                # If no tasks found, skip this message
-                if not git_tasks and not jira_tasks:
-                    logger.info(f"No Git/Jira tasks found for message {mid}, skipping")
-                    continue
-                
-                # Try to claim this message for processing
-                claimed_message = self.try_claim_message(mid)
-                if not claimed_message:
-                    logger.info(f"Could not claim message {mid}, skipping")
-                    continue
-                    
                 # Wait for all task replies to be available
                 all_tasks = self.wait_for_all_task_replies(mid)
                 if not all_tasks:
@@ -235,10 +198,11 @@ class MidMessageProcessor:
                     continue
 
                 # Generate the summary reply using LLM
+                print(all_tasks)
                 reply = self.generate_summary_for_message(mid, all_tasks)
 
                 # Update the message with the final reply
-                success = self.update_message_with_reply(mid, reply, claimed_message)
+                success = self.update_message_with_reply(mid, reply)
                 if success:
                     logger.info(f"Successfully processed message {mid}")
                     processed_count += 1
@@ -249,8 +213,8 @@ class MidMessageProcessor:
 
             except Exception as e:
                 logger.error(f"Error processing message {mid}: {e}")
-
-        return f"Processed {processed_count} messages"
+                
+        return processed_count
 
     def run(self):
         logger.info("Starting MidMessageProcessor...")
@@ -263,9 +227,17 @@ class MidMessageProcessor:
                 time.sleep(self.check_interval)
 
 
-# Create a Celery task to process Git and Jira task replies
+# Create an instance of the processor
+processor = MidMessageProcessor()
+
+# Create the Celery task
 @celery_app.task(name='app.listeners.reply_git_jira.process_messages_for_reply')
 def process_messages_for_reply():
-    """Celery task to process messages and generate replies from Git/Jira task results"""
-    processor = MidMessageProcessor()
-    return processor.process_messages()
+    """Celery task to process messages and generate replies from Git/Jira tasks"""
+    try:
+        processed_count = processor.process_messages()
+        logger.info(f"Processed {processed_count} messages")
+        return f"Processed {processed_count} messages for reply generation"
+    except Exception as e:
+        logger.error(f"Error in process_messages_for_reply task: {e}")
+        return f"Error processing messages for reply: {e}"
