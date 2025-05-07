@@ -94,22 +94,22 @@ services:
   # #   # networks: # Uncomment if using custom network
   # #   #   - default
 
-  # # # ---- BEAT SERVICE ----
+  # # ---- BEAT SERVICE ----
 
-  # beat: # Now schedules both email polling AND intent classification
-  #   build: .
-  #   # Corrected Command: Use the default Celery Beat scheduler
-  #   command: celery -A app.celery_app beat --loglevel=info
-  #   # volumes: # Temporarily commented out
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://redis:6379/0
-  #     # Add other necessary env vars if beat accesses DB or APIs directly
-  #   depends_on:
-  #     - redis
-  #     # - web # Only if beat calls the API
-  #   restart: always
+  beat: # Now schedules both email polling AND intent classification
+    build: .
+    # Corrected Command: Use the default Celery Beat scheduler
+    command: celery -A app.celery_app beat --loglevel=info
+    # volumes: # Temporarily commented out
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Add other necessary env vars if beat accesses DB or APIs directly
+    depends_on:
+      - redis
+      # - web # Only if beat calls the API
+    restart: always
 
   # # # ---- CLASSIFIER WORKER SERVICE ----
   # classifier_worker: # Worker service for the classifier queue
