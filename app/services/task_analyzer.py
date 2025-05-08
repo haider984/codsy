@@ -1,3 +1,4 @@
+
 import os
 import requests
 import logging
@@ -7,17 +8,16 @@ from datetime import datetime, timezone
 import json
 
 # Load environment
-load_dotenv(override=True)
+load_dotenv()
 openai_api_key = os.getenv("TASK_ANALYZER_OPENAI_API_KEY")
-# Use INTERNAL_BASE_API_URL for calls made from within worker containers
-INTERNAL_BASE_API_URL = os.getenv("INTERNAL_BASE_API_URL", "http://web:8000") # Default internal URL
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 client = OpenAI(api_key=openai_api_key)
 logger = logging.getLogger("TaskAnalyzer")
 
 def fetch_message(mid):
     try:
-        response = requests.get(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}")
+        response = requests.get(f"{BASE_API_URL}/api/v1/messages/{mid}")
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -28,7 +28,7 @@ def analyze_tasks_with_llm(content):
     prompt = f"""
 You are a task analyzer. IMPORTANT: Given message content, extract each GITHUB and JIRA related task and decide whether each task belongs in GitHub or Jira.
 IMPORTANT: Analyze the message content completely and see if there is any task that can be extracted.
-IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task.
+IMPORTANT: ALWAYS make sure that no github and jira related task is left behind and that you are not missing any task even. 
 
 Required JSON format:
 [
@@ -38,9 +38,12 @@ Required JSON format:
     "platform": "jira" or "git"
   }}
 ]
+IMPORTANT: ALWAYS make sure to include github repository name both in title and description for git platform
+IMPORTANT: ALWAYS make sure to include project key and project name in capital letters for jira platform
 
 Example Input:
 I've got a new project I want you to start — it's called DevTrack8. It's a single-page HTML dashboard meant to mock up a simple developer task tracker. Here's what I need:
+- First of all give me list of all jira projects and github repositories
 - Create a public GitHub repo called devtrack8-dashboard
 - Create a Jira project called DEVTRACK8
 - Add a ticket for yourself to implement the first version of the dashboard
@@ -54,36 +57,44 @@ I've got a new project I want you to start — it's called DevTrack8. It's a sin
   - Basic responsive styling to make it look like a mini web app
   - Tasks can be represented using HTML and styled with CSS — no real interactivity is needed right now
 - Push the result to the GitHub repo when you're done.
-
 Example Output (JSON):
 [
+  {{
+    "title": "list github repositories",
+    "description": "List github repositories",
+    "platform": "git"
+  }},
+  {{
+    "title": "list jira projects",
+    "description": "List jira projects",
+    "platform": "jira"
+  }},
   {{
     "title": "Create GitHub repository for DevTrack8",
     "description": "Set up a public GitHub repository named 'devtrack8-dashboard' to host the code for the DevTrack8 dashboard project.",
     "platform": "git"
   }},
   {{
-    "title": "Set up Jira project DEVTRACK8",
+    "title": "Set up Jira project named DEVTRACK8",
     "description": "Create a new Jira project named DEVTRACK8 to track tasks related to the DevTrack8 dashboard.",
     "platform": "jira"
   }},
   {{
-    "title": "Add initial ticket to Jira for dashboard implementation",
+    "title": "Add initial ticket to Jira for dashboard implementation in jira project named DEVTRACK8",
     "description": "Create a Jira ticket for implementing the first version of the dashboard as a single HTML file.",
     "platform": "jira"
   }},
   {{
-    "title": "Implement basic DevTrack8 dashboard in HTML",
-    "description": "Create a single HTML file with a header ('DevTrack8'), a search bar to filter tasks, and a list of 4–5 hardcoded tasks with title, status, and optional tags. Apply basic responsive styling to resemble a web app.",
+    "title": "Implement basic DevTrack8 dashboard in HTML in github repository named devtrack8-dashboard",
+    "description": "Create a single HTML file index.html with a header ('DevTrack8'), a search bar to filter tasks, and a list of 4–5 hardcoded tasks with title, status, and optional tags. Apply basic responsive styling to resemble a web app. Commit and push the completed HTML dashboard to the 'devtrack8-dashboard' repository.",
     "platform": "git"
   }},
   {{
-    "title": "Push HTML dashboard to GitHub repository",
+    "title": "Push HTML dashboard to GitHub repository named devtrack8-dashboard",
     "description": "Commit and push the completed HTML dashboard to the 'devtrack8-dashboard' repository.",
     "platform": "git"
   }}
 ]
-
 Now, read the following message and ALWAYS return a list of tasks as JSON.
 Content:
 \"\"\"
@@ -111,28 +122,39 @@ Content:
     except Exception as e:
         logger.error(f"Task analysis failed: {e}")
         return []
+from datetime import datetime, timezone
 
 def post_task(task, mid):
     task["mid"] = mid
+    task["reply"] = ""
     task["status"] = "pending"
-    task["creation_date"] = datetime.now(timezone.utc).isoformat()
-    task["completion_date"] = task["creation_date"]
+    
+    # Adjust creation_date to match the required format (without 'Z' or extra characters)
+    task["creation_date"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()  # No 'Z' added
+    
+    # Set completion_date to None if not provided
+    task["completion_date"] = None  # Ensure this is either None or a valid datetime
+    
+    task["description"] = task.get("description", "")  # Ensure description is provided
 
+    # Choose the correct endpoint based on the platform
     endpoint = "/api/v1/jiratasks/" if task["platform"] == "jira" else "/api/v1/gittasks/"
+
     try:
-        response = requests.post(INTERNAL_BASE_API_URL + endpoint, json=task)
-        response.raise_for_status()
+        response = requests.post(BASE_API_URL + endpoint, json=task)
+        response.raise_for_status()  # Will raise an exception for 4xx/5xx errors
         logger.info(f"Posted task: {task['title']} to {task['platform']}")
         return True
-    except Exception as e:
-        logger.error(f"Failed to post task: {e}")
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Failed to post task: {e.response.status_code} {e.response.text}")
         return False
+
 
 def update_message_status(mid, original_msg):
     try:
         original_msg["processed"] = True
         original_msg["status"] = "processed"
-        response = requests.put(f"{INTERNAL_BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
+        response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=original_msg)
         response.raise_for_status()
         logger.info(f"Updated message {mid} to processed")
     except Exception as e:

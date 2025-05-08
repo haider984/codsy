@@ -13,3 +13,7 @@ langchain
 slack_bolt==1.23.0
 slack_sdk==3.35.0
 openai
+jira
+PyGithub
+GitPython
+langchain-community

@@ -67,10 +67,10 @@ services:
       # Listener needs broker URL to *send* tasks to the worker
       - CELERY_BROKER_URL=redis://redis:6379/0
       # Needs INTERNAL_BASE_API_URL *if* it ever calls the API directly (currently doesn't)
-      # - INTERNAL_BASE_API_URL=http://web:8000
+      - INTERNAL_BASE_API_URL=http://web:8000
     depends_on:
       - redis # Depends on broker to send tasks
-      # - web # Only if it calls the API directly
+      - web # Only if it calls the API directly
     restart: always
     # networks: # Uncomment if using custom network
     #   - default
@@ -112,7 +112,7 @@ services:
     restart: always
 
   # ---- CLASSIFIER WORKER SERVICE ----
-  classifier_worker: # New worker service for the classifier queue
+  classifier_worker: # Worker service for the classifier queue
     build: .
     # Command to start celery worker listening ONLY to the classifier queue
     command: celery -A app.celery_app worker --loglevel=info -Q classifier_queue
@@ -150,9 +150,58 @@ services:
       - web # Depends on the API service being available
     restart: always
 
-# networks:
-#   default:
-#     driver: bridge
+  # ---- GIT/JIRA WORKER SERVICE ----
+  git_jira_worker: # Worker service for the git/jira task execution queue
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
+    volumes:
+      - ./app:/app/app
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - INTERNAL_BASE_API_URL=http://web:8000
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+    depends_on:
+      - redis
+      - web
+    restart: always
 
-# volumes:
-#   celerybeat-schedule:
+  # ---- REPLY GIT/JIRA WORKER SERVICE ----
+  reply_git_jira_worker: # New worker service for the reply generation queue
+    build: .
+    command: celery -A app.celery_app worker --loglevel=info -Q reply_git_jira_queue
+    volumes:
+      - ./app:/app/app # Mount code same as web
+    env_file:
+      - .env         # Load necessary environment variables (GROQ_API_KEY etc.)
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
+      # Worker needs internal API URL to call back to 'web' service
+      - INTERNAL_BASE_API_URL=http://web:8000
+      # Explicitly add GROQ_API_KEY if needed
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      - redis        # Depends on the message broker
+      - web          # Depends on the API service being available
+    restart: always  # Restart worker if it fails
+
+  # ---- FILE SERVER SERVICE ----
+  file_server:
+    build: .
+    command: python -m app.listeners.file_server
+    ports:
+      - "8001:8001"  # Map port 8001 to host
+    volumes:
+      - ./app:/app/app  # Mount app directory
+      - ./:/app/  # Mount root directory to access cloned repos
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - PREVIEW_SERVER_URL=http://localhost:8001
+      - GITHUB_REPOS_DIR=/app
+    depends_on:
+      - redis
+    restart: always

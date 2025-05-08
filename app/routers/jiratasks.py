@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Query
+from typing import List, Optional
 from bson import ObjectId
 from pymongo import ReturnDocument
 
@@ -32,11 +32,15 @@ async def create_jiratask(
 
 @router.get("/", response_model=List[JiraTaskInDB], response_model_by_alias=False)
 async def read_all_jiratasks(
+    status: Optional[str] = Query(None, description="Filter by task status"),
     collection = Depends(get_jiratask_collection)
 ):
-    """Retrieves all Jira tasks."""
-    jiratasks_cursor = collection.find()
-    jiratasks = await jiratasks_cursor.to_list(length=None)  # Fetch all Jira tasks
+    """Retrieves all Jira tasks, optionally filtered by status."""
+    query = {}
+    if status:
+        query["status"] = status
+    jiratasks_cursor = collection.find(query)
+    jiratasks = await jiratasks_cursor.to_list(length=None)  # Fetch matching Jira tasks
     return [JiraTaskInDB(**jt) for jt in jiratasks]
 
 @router.get("/{jira_task_id}", response_model=JiraTaskInDB, response_model_by_alias=False)

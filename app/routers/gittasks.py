@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends, status, Path, Query
+from typing import List, Optional
 from bson import ObjectId
 from pymongo import ReturnDocument
 
@@ -7,6 +7,7 @@ from ..models.gittask import GitHubTaskCreate, GitHubTaskInDB
 from ..db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..utils.dependencies import validate_object_id_sync
+
 
 router = APIRouter()
 
@@ -32,11 +33,13 @@ async def create_gittask(
 
 @router.get("/", response_model=List[GitHubTaskInDB], response_model_by_alias=False)
 async def read__all_gittasks(
+    status: Optional[str] = Query(None, description="Filter tasks by status (e.g., pending, in_progress, completed)"),
     collection = Depends(get_gittask_collection)
 ):
-    """Retrieves all GitHub tasks."""
-    github_tasks_cursor = collection.find()
-    github_tasks = await github_tasks_cursor.to_list(length=None)  # Fetch all GitHub tasks
+    """Retrieves all GitHub tasks, optionally filtered by status."""
+    query = {"status": status} if status else {}
+    github_tasks_cursor = collection.find(query)
+    github_tasks = await github_tasks_cursor.to_list(length=None)
     return [GitHubTaskInDB(**gt) for gt in github_tasks]
 
 @router.get("/{git_task_id}", response_model=GitHubTaskInDB, response_model_by_alias=False)
