@@ -81,37 +81,46 @@ def get_project(project_key):
 
 def list_projects():
     server = os.getenv("JIRA_SERVER")
-    
+    email = os.getenv("JIRA_EMAIL")
+    api_token = os.getenv("JIRA_API_TOKEN")
+    if not all([server, email, api_token]):
+        raise ValueError("Missing Jira credentials in environment")
+    url = f"{server}/rest/api/3/project"
+    auth = (email, api_token)
+    headers = {
+        "Accept": "application/json"
+    }
     try:
-        with open(JSON_PATH, 'r') as f:
-            projects_data = json.load(f)
-    except FileNotFoundError:
-        print("Metadata file not found.")
-        return []
-    except json.JSONDecodeError:
-        print("Error decoding JSON from metadata file.")
-        return []
-
+        response = requests.get(url, headers=headers, auth=auth)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        error_details = "Unknown error"
+        try:
+            error_details = response.json()
+        except Exception:
+            error_details = response.text
+        raise RuntimeError(f"Failed to fetch projects: {e} | Details: {error_details}")
+    projects = response.json()
+    if not projects:
+        return "No projects found"
     data = []
-    for key, project in projects_data.items():
+    for project in projects:
+        key = project.get("key")
+        name = project.get("name")
         project_info = {
-            "key": project.get("key"),
-            "name": project.get("name"),
+            "key": key,
+            "name": name,
             "url": f"{server}/browse/{key}"
         }
         data.append(project_info)
-        print(f"Project-key: {project_info['key']} | Name: {project_info['name']} | URL: {project_info['url']}")
-
-    # Check if no projects were found
-    if not data:
-        return "No projects found"
-    
+        print(f"Project-key: {key} | Name: {name} | URL: {project_info['url']}")
+        update_project_metadata(project_info)
     return data
 
 
 
 def create_project_rest(key, name):
-    
+
     server = os.getenv("JIRA_SERVER")
     email = os.getenv("JIRA_EMAIL")
     api_token = os.getenv("JIRA_API_TOKEN")
