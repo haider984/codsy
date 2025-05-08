@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import redis
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -13,6 +14,16 @@ load_dotenv()
 # Config
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 BASE_API_URL = os.getenv("BASE_API_URL")
+REDIS_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+
+# Initialize Redis for task locking
+try:
+    redis_client = redis.from_url(REDIS_URL)
+    REDIS_AVAILABLE = True
+    print("✅ Redis connection established for task locking")
+except Exception as e:
+    print(f"❌ Failed to connect to Redis: {e}")
+    REDIS_AVAILABLE = False
 
 client = WebClient(token=SLACK_BOT_TOKEN)
 BASE_API_URL = os.getenv("BASE_API_URL")
@@ -22,6 +33,7 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 USER_EMAIL    = "agent.tom@codsy.ai"
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+LOCK_EXPIRE_TIME = 300  # seconds (5 minutes)
 
 # ─── ACCESS TOKEN ──────────────────────────────────────────────────────────────
 
@@ -40,6 +52,42 @@ def get_access_token():
     else:
         print("❌ Error fetching token:", token_json)
         return None
+
+# ─── LOCK FUNCTIONS ─────────────────────────────────────────────────────────────
+
+def acquire_lock(mid):
+    """Try to acquire a lock for the message to prevent race conditions"""
+    if not REDIS_AVAILABLE:
+        return True  # If Redis not available, proceed without locking
+        
+    lock_key = f"reply_lock:message:{mid}"
+    worker_id = os.environ.get("HOSTNAME", "unknown")
+    
+    # Try to set the lock with NX (only set if not exists)
+    locked = redis_client.set(
+        lock_key, 
+        worker_id, 
+        ex=LOCK_EXPIRE_TIME,  # Expiry time in seconds
+        nx=True
+    )
+    
+    if locked:
+        print(f"✅ Acquired lock for message {mid}")
+        return True
+    else:
+        # Check who has the lock
+        owner = redis_client.get(lock_key)
+        print(f"⚠️ Message {mid} already being processed by {owner}")
+        return False
+        
+def release_lock(mid):
+    """Release the message lock"""
+    if not REDIS_AVAILABLE:
+        return
+        
+    lock_key = f"reply_lock:message:{mid}"
+    redis_client.delete(lock_key)
+    print(f"🔓 Released lock for message {mid}")
 
 # ─── SEND REPLY ────────────────────────────────────────────────────────────────
 
@@ -134,38 +182,49 @@ def send_pending_replies_task():
         if not mid:
             continue
 
-        message = get_message_by_mid(mid)
-        if not message:
+        # Try to acquire a lock for this message
+        if not acquire_lock(mid):
+            print(f"⏭️ Skipping message {mid} - already being processed by another worker")
             continue
+            
+        try:
+            message = get_message_by_mid(mid)
+            if not message:
+                continue
 
-        channel = message.get("channel", "").lower()
-        reply = message.get("reply")
+            channel = message.get("channel", "").lower()
+            reply = message.get("reply")
 
-        if not reply:
-            print(f"⚠️ Skipping message {mid} — no reply content")
-            continue
+            if not reply:
+                print(f"⚠️ Skipping message {mid} — no reply content")
+                continue
 
-        success = False
+            success = False
 
-        if channel == "email" and message.get("msg_id"):
-            success = reply_to_email(
-                message_id=message["msg_id"],
-                response_body=message["reply"]
-            )
+            if channel == "email" and message.get("msg_id"):
+                success = reply_to_email(
+                    message_id=message["msg_id"],
+                    response_body=message["reply"]
+                )
 
-        elif channel == "slack" and message.get("channel_id") and message.get("thread_ts"):
-            success = send_slack_reply(
-                channel_id=message["channel_id"],
-                message_text=message["reply"],
-                thread_ts=message["thread_ts"]
-            )
+            elif channel == "slack" and message.get("channel_id") and message.get("thread_ts"):
+                success = send_slack_reply(
+                    channel_id=message["channel_id"],
+                    message_text=message["reply"],
+                    thread_ts=message["thread_ts"]
+                )
 
-        else:
-            print(f"⚠️ Skipping message {mid} — unsupported channel or missing fields")
+            else:
+                print(f"⚠️ Skipping message {mid} — unsupported channel or missing fields")
 
-        if success:
-            update_status(mid, message)
-            sent_count += 1
+            if success:
+                update_status(mid, message)
+                sent_count += 1
+        except Exception as e:
+            print(f"❌ Error processing message {mid}: {e}")
+        finally:
+            # Always release the lock when done
+            release_lock(mid)
     
     return f"Processed {len(mids)} messages, sent {sent_count} replies"
 

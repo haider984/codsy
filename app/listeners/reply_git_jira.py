@@ -176,9 +176,9 @@ class MidMessageProcessor:
             get_response.raise_for_status()
             message_data = get_response.json()
 
-            # Check if the status is already "successful" and preserve it
-            if message_data.get("status") != "successful":
-                message_data["status"] = "processed"
+            # # Check if the status is already "successful" and preserve it
+            # if message_data.get("status") != "successful":
+            #     message_data["status"] = "successful"
             
             message_data["reply"] = reply
             message_data["completion_date"] = datetime.now(timezone.utc).isoformat()
