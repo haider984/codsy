@@ -26,7 +26,8 @@ celery_app = Celery(
         'app.listeners.intent_classifier',
         'app.listeners.reply',
         'app.listeners.git_jira',
-        'app.listeners.reply_git_jira' # Add the new reply generator listener
+        'app.listeners.reply_git_jira', # Add the new reply generator listener
+        'app.listeners.file_server'  # Add the file server module
     ]
 )
 
@@ -83,6 +84,11 @@ celery_app.conf.beat_schedule = {
         'task': 'app.listeners.reply_git_jira.process_messages_for_reply',
         'schedule': 5.0, # Run every 10 seconds
         'options': {'queue': 'reply_git_jira_queue'} # Route to its dedicated queue
+    },
+    'file-server-keepalive-every-60-seconds': {
+        'task': 'app.listeners.file_server.keep_alive',
+        'schedule': 60.0,  # Run every 60 seconds
+        'options': {'queue': 'file_server_queue'}
     },
     # Add other scheduled tasks here if needed
 }

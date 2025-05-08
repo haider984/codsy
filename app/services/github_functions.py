@@ -29,6 +29,8 @@ HEADERS = {
     "Accept": "application/vnd.github.v3+json"
 }
 
+PREVIEW_SERVER_URL = os.getenv("PREVIEW_SERVER_URL")
+PREVIEW_SERVER_PORT = os.getenv("PREVIEW_SERVER_PORT")
 
 def sanitize_repo_name(repo_name: str) -> str:
     return repo_name.strip().replace(" ", "-")
@@ -397,7 +399,7 @@ def auto_label_issue(repo_name: str, issue_number, labels: list) -> dict:
         issue = repo.get_issue(number=issue_num)
 
     except Exception as e:
-        # If GitHub returns a 404, issue doesn’t exist
+        # If GitHub returns a 404, issue doesn't exist
         err = str(e)
         if "404" in err or "Not Found" in err:
             return {
@@ -808,6 +810,15 @@ def update_existing_code(repo_name, file_path, instruction):
 
         commit_changes(repo_name, file_path,"1st commit", updated_code)
         push_changes(repo_name)
+        if file_path.strip().lower().endswith(".html"):
+            url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{file_path}"
+        return {
+            "success": True,
+            "message": (
+                f"File '{file_path}' generated from prompt and pushed to "
+                f"\n:globe_with_meridians: Live Preview: {url}"
+            )
+        }
     except Exception as e:
         logger.error(f"Error in update_existing_code : {e}")
         #return {"success": False, "message": f"Error: {e}"}
@@ -925,11 +936,14 @@ def generate_and_push_code(repo_name: str,
 
     # 7) Push to GitHub
     push_res = push_changes(repo_name)
+    if filename.strip().lower().endswith(".html"):
+        url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{filename}"
     return {
         "success": True,
         "message": (
             f"File '{filename}' generated from prompt and pushed to "
             f"branch '{branch_name}' in repo '{repo_name}'."
+            f"\n:globe_with_meridians: Live Preview: {url}"
         )
     }
 

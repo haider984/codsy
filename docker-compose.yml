@@ -186,3 +186,22 @@ services:
       - redis        # Depends on the message broker
       - web          # Depends on the API service being available
     restart: always  # Restart worker if it fails
+
+  # ---- FILE SERVER SERVICE ----
+  file_server:
+    build: .
+    command: python -m app.listeners.file_server
+    ports:
+      - "8001:8001"  # Map port 8001 to host
+    volumes:
+      - ./app:/app/app  # Mount app directory
+      - ./:/app/  # Mount root directory to access cloned repos
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - PREVIEW_SERVER_URL=http://localhost:8001
+      - GITHUB_REPOS_DIR=/app
+    depends_on:
+      - redis
+    restart: always
