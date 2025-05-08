@@ -156,7 +156,8 @@ def extract_parameters(func_name, query):
                 - If a project name is mentioned (e.g. "test"), create a new key `"project"` with the value set to the uppercase of the project name (e.g., "TEST").
                 - If an issue is referenced like "issue 5 in project test" or "issue one in test", create a new key `"issue"` with the value formatted as issue_key (e.g., "TEST-5").
                 - Handle numeric and word forms of small integers (e.g., "one" = 1, "two" = 2).
-                - project_key must match the inferred project key in uppercase.
+                - IMPORTANT: project_key and issue_key must ALWAYS match the inferred project key and issue key in uppercase letters.
+                
                 Return output in the following JSON format:
                 ```json
                 {{
@@ -173,6 +174,7 @@ def extract_parameters(func_name, query):
             )
         response = llm.invoke(formatted_prompt)
         result = response.content.strip().lower()
+        print(f"Raw response: {result}")
         
         # Extract JSON from response
         json_match = re.search(r'```json\s*(.*?)\s*```', result, re.DOTALL)
@@ -247,21 +249,28 @@ def identify_function(query):
         return None
 
 def generate_unique_project_key(base_key, json_path):
-    key = base_key
+    key = base_key.upper()
+    print(f"Base key: {key}")
     suffix = 1
+
+    existing_keys = set()
 
     if os.path.exists(json_path):
         with open(json_path, 'r') as f:
-            data = json.load(f)
-        existing_keys = set(k.upper() for k in data.keys())
-    else:
-        existing_keys = set(k.upper() for k in data.keys())
+            try:
+                data = json.load(f)
+                # Assuming it's a list of project objects
+                existing_keys = set(proj.get('key', '').upper() for proj in data if 'key' in proj)
+            except json.JSONDecodeError:
+                print(f"Warning: JSON file at {json_path} is empty or invalid. Proceeding with empty key set.")
+                existing_keys = set()
 
-    while key in existing_keys:
-        key = f"{base_key}{suffix}"
+    new_key = key
+    while new_key in existing_keys:
+        new_key = f"{key}{suffix}"
         suffix += 1
 
-    return key
+    return new_key
 
 def process_query_jira(query):
     print(f"Processing query: {query}")
@@ -279,6 +288,10 @@ def process_query_jira(query):
             if not base_key:
                 return "Error: Could not generate a valid project key. Please provide one explicitly."
             params["key"] = generate_unique_project_key(base_key, JSON_PATH)
+        else:
+            # Ensure provided key is uppercase
+            params["key"] = params["key"].upper()
+
 
     # Resolve project key if project name is provided
     if 'project_key' in params:
@@ -326,7 +339,11 @@ def process_query_jira(query):
 
             result = func(*args)
 
-        return "Operation completed successfully"
+        # Format the result as JSON if it's structured
+        if isinstance(result, (dict, list)):
+            return json.dumps(result, indent=2)
+        else:
+            return str(result)
 
     except Exception as e:
         return f"Error executing function {function_name}: {str(e)}"
