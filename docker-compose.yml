@@ -30,28 +30,6 @@ services:
     # networks: # Uncomment if using custom network
     #   - default
 
-  email_worker: # Worker for email tasks
-    build: .
-    command: celery -A app.celery_app worker --loglevel=info -Q email_queue
-    volumes:
-      - ./app:/app/app # Mount code same as web
-    env_file:
-      - .env         # Load same environment variables
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0 # Worker needs broker URL
-      # Worker needs internal API URL to call back to 'web' service
-      - INTERNAL_BASE_API_URL=http://web:8000
-      # Needs Graph API creds for sending replies
-      - TENANT_ID=${TENANT_ID}
-      - CLIENT_ID=${CLIENT_ID}
-      - CLIENT_SECRET=${CLIENT_SECRET}
-      - USER_EMAIL=${USER_EMAIL}
-    depends_on:
-      - redis
-      - web # Worker might depend on the web API being available
-    restart: always # Restart worker if it fails
-    # networks: # Uncomment if using custom network
-    #   - default
 
   # ---- SLACK SERVICES ----
 
