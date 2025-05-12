@@ -156,6 +156,7 @@ services:
     command: celery -A app.celery_app worker --loglevel=info -Q git_jira_queue
     volumes:
       - ./app:/app/app
+      - ./:/app/  # Add this line to share the root directory
     env_file:
       - .env
     environment:
@@ -163,6 +164,9 @@ services:
       - INTERNAL_BASE_API_URL=http://web:8000
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - PREVIEW_SERVER_URL=${PREVIEW_SERVER_URL:-http://localhost}  # Add preview server URL
+      - PREVIEW_SERVER_PORT=${PREVIEW_SERVER_PORT:-8001}  # Add preview server port
+      - GITHUB_REPOS_DIR=/app  # Add repo directory to match file_server
     depends_on:
       - redis
       - web

@@ -24,10 +24,10 @@ from .metadata_utils import (
     save_metadata,
     update_project_metadata,
     get_project_key_by_name,
-    store_issue_metadata,
-    JSON_PATH
+    store_issue_metadata
 )
 
+JSON_PATH = "project_metadata.json"
 
 # Load environment
 load_dotenv()
