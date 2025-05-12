@@ -142,3 +142,11 @@ docker-compose.override.yml
 .gitignore
 
 # Python
+
+# Generated/cloned repositories 
+# Ignore any directory that might contain embedded git repositories
+/*/
+!app/
+!docs/
+!tests/
+!scripts/

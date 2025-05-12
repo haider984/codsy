@@ -725,20 +725,28 @@ def generate_code(request_prompt):
     try:
         llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
         prompt_template = PromptTemplate(
-            template=""" "You are an expert programmer. Write clean, concise, and correct code based on the user's instructions. "
-            "Your response must include only the final code — no explanations, no formatting tags, no extra words, "
-            "and no quotation marks. Do not mention the programming language. Just output the code."
-            ""
+            template="""You are an expert programmer. Write clean, concise, and correct code based on the user's instructions.
+            Your response must include only the final code with no explanations or formatting tags.
+            For HTML files, ensure all CSS and JavaScript is properly embedded within the HTML file itself.
+            Make sure all paths and resources are relative and self-contained.
+            Create complete, standalone files that will work in a Docker container environment.
 
             User query: {request_prompt}""",
-        input_variables=["request_prompt"],
-    )
+            input_variables=["request_prompt"],
+        )
     
         prompt = prompt_template.format(request_prompt=request_prompt)
 
         response = llm.invoke(prompt)
         
-        return response.content.strip().lower()
+        output = response.content.strip().lower()
+
+        if output.startswith("```json"):
+            output = output[7:]  # Remove ```json
+        if output.endswith("```"):
+            output = output[:-3]  # Remove ```
+
+        return output
 
     except Exception as e:
         logging.error(f"Error generating code: {e}")
@@ -762,13 +770,15 @@ def update_code(existing_code, instruction):
     try:
         llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
         prompt_template = PromptTemplate(
-            template=""" "You are an expert programmer and code refiner."
-        "Analyze the provided code and modify it according to the instruction."
-        "Your response must contain only the final, updated code — no explanations, no formatting tags, no extra text, no quotation marks, and no language identifiers."
-        "Ensure the code is syntactically correct and complete."
+            template="""You are an expert programmer and code refiner.
+        Analyze the provided code and modify it according to the instruction.
+        Your response must contain only the final, updated code without any explanations or additional text.
+        For HTML files, ensure all CSS and JavaScript is properly embedded within the HTML file itself.
+        Make sure all paths and resources are relative and self-contained.
+        Create complete, standalone files that will work in a Docker container environment.
 
-            current code: {existing_code}
-            instruction: {instruction}""",
+        Current code: {existing_code}
+        Instruction: {instruction}""",
         input_variables=["existing_code", "instruction"],
         )
         
@@ -776,6 +786,12 @@ def update_code(existing_code, instruction):
         response = llm.invoke(prompt)
         
         updated_code = response.content.strip()
+
+        if updated_code.startswith("```html"):
+            updated_code = updated_code[7:]  # Remove ```json
+        if updated_code.endswith("```"):
+            updated_code = updated_code[:-3]  # Remove ```
+
         return updated_code
     except Exception as e:
         logger.error(f"Error in intelligent_code_modifier: {e}")
