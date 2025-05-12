@@ -741,7 +741,7 @@ def generate_code(request_prompt):
         
         output = response.content.strip().lower()
 
-        if output.startswith("```json"):
+        if output.startswith("```html"):
             output = output[7:]  # Remove ```json
         if output.endswith("```"):
             output = output[:-3]  # Remove ```
