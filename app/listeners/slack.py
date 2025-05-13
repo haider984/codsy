@@ -3,23 +3,339 @@ import logging
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
 import requests
 from datetime import datetime, timezone, timedelta
-from app.celery_app import celery_app  # Import the Celery app
+from app.celery_app import celery_app
+from groq import Groq
 
 # ——— CONFIGURATION ———
 load_dotenv()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 BASE_API_URL = os.getenv("BASE_API_URL")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 # ——— LOGGER + SLACK INIT ———
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
+# Initialize Groq client
+client = Groq(api_key=GROQ_API_KEY)
 
-def create_message_in_db(username,text, msg_ts, channel_id):
+class ContextAwareSlackHandler:
+    def __init__(self):
+        self.history_window = timedelta(hours=48)  # Look back 48 hours for context
+
+    def get_message_history(self, channel_id, user=None, limit=10):
+        """
+        Retrieve message history from the database
+        Optionally filter by user and limit the number of records
+        """
+        try:
+            params = {}
+            if user:
+                params["username"] = user
+            if channel_id:
+                params["channel_id"] = channel_id
+                
+            response = requests.get(f"{BASE_API_URL}/api/v1/messages/", params=params)
+            response.raise_for_status()
+            
+            # Sort messages by datetime
+            messages = response.json()
+            messages.sort(key=lambda x: x.get("message_datetime", ""))
+            
+            # Return the most recent messages up to the limit
+            return messages[-limit:] if limit else messages
+        except Exception as e:
+            logger.error(f"Error fetching message history: {e}")
+            return []
+
+    def analyze_message_context(self, current_message, history):
+        """
+        Analyze the current message to determine:
+        1. If it's a follow-up to previous conversation
+        2. If it needs context enhancement
+        3. What specific context should be included
+        """
+        if not history:
+            return {
+                "is_followup": False,
+                "needs_context": False,
+                "context_quality": 0.0,
+                "relevant_context": [],
+                "rewrite_suggestion": None
+            }
+            
+        try:
+            # Create a prompt for the LLM to analyze context
+            current_content = current_message.get("content", "")
+            current_username = current_message.get("username", "User")
+            
+            # Format history for context analysis
+            conversation_history = []
+            for msg in history:
+                username = msg.get("username", "User")
+                content = msg.get("content", "")
+                reply = msg.get("reply", "")
+                
+                if content:
+                    conversation_history.append(f"User ({username}): {content}")
+                if reply and reply not in [None, "", "null"]:
+                    conversation_history.append(f"Assistant: {reply}")
+            
+            system_prompt = """
+            You are a context analysis assistant. Your task is to analyze the current message 
+            and determine if it requires previous conversation context to be fully understood.
+            
+            Provide a JSON response with the following fields:
+            - is_followup: boolean (true if this message is continuing a previous conversation)
+            - needs_context: boolean (true if this message needs additional context to be properly understood)
+            - context_quality: float (0.0-1.0 score indicating how much this message depends on previous context)
+            - relevant_context: array of integers (indices of relevant messages from the history, starting from 0)
+            - rewrite_suggestion: string or null (a suggested rewrite of the query that includes missing context, or null if not needed)
+            
+            Be very careful about detecting references to:
+            1. Previous questions or requests
+            2. Pronouns without clear referents (it, that, them, etc.)
+            3. Follow-up questions that build on previous answers
+            4. Requests for elaboration or clarification
+            5. References to entities/concepts introduced earlier
+            """
+            
+            user_prompt = f"""
+            Current message: "{current_content}"
+            
+            Previous conversation history (in chronological order):
+            {chr(10).join([f"{i+1}. {msg}" for i, msg in enumerate(conversation_history[-10:])])}
+            
+            Analyze if the current message needs context from previous messages to be fully understood.
+            """
+            
+            # Generate response with Groq - using a smaller/faster model for this analysis task
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Low temperature for more deterministic response
+                response_format={"type": "json_object"},
+                max_tokens=500
+            )
+            
+            # Parse the JSON response
+            import json
+            analysis = json.loads(response.choices[0].message.content)
+            logger.info(f"Context analysis result: {analysis}")
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Context analysis failed: {e}")
+            # Default response if analysis fails
+            return {
+                "is_followup": False,
+                "needs_context": False,
+                "context_quality": 0.0,
+                "relevant_context": [],
+                "rewrite_suggestion": None
+            }
+
+    def enhance_message_with_context(self, message, history, analysis):
+        """
+        If the message needs context enhancement, modify it to include necessary context
+        """
+        if not analysis.get("needs_context", False):
+            return message
+            
+        try:
+            # Get the original content
+            original_content = message.get("content", "")
+            
+            # If there's a rewrite suggestion, use it
+            if analysis.get("rewrite_suggestion"):
+                enhanced_content = analysis["rewrite_suggestion"]
+                
+                # Create an enhanced message object
+                enhanced_message = message.copy()
+                enhanced_message["original_content"] = original_content
+                enhanced_message["content"] = enhanced_content
+                enhanced_message["context_enhanced"] = True
+                enhanced_message["context_quality"] = analysis.get("context_quality", 0.0)
+                
+                logger.info(f"Enhanced message: '{original_content}' -> '{enhanced_content}'")
+                return enhanced_message
+                
+            return message
+        except Exception as e:
+            logger.error(f"Error enhancing message with context: {e}")
+            return message
+
+    def generate_llm_response(self, message, message_history, analysis):
+        """
+        Generate a response using the Groq LLM based on message and history
+        Intelligently include relevant context based on analysis
+        """
+        try:
+            system_prompt = """
+            You are Agent Lisa, a helpful technical assistant integrated with a Slack workspace.
+            
+            IMPORTANT INSTRUCTIONS:
+            1. Always maintain context between messages and reference specific details from previous exchanges.
+            2. When responding to requests about creating or modifying resources (like GitHub repos, Jira projects, etc.):
+               - Use the SAME NAMES for related resources unless explicitly told otherwise
+               - If a user created a GitHub repo called "ailet", create Jira projects with the same name "ailet"
+               - Extract and reuse specific resource names mentioned in previous messages
+            3. Be direct and action-oriented in your responses. Act as if you have already completed the requested tasks.
+            4. For resource creation responses, always include:
+               - The exact resource name (repo name, project name, etc.)
+               - A fictitious but realistic access URL
+            5. Your responses should be concise (2-3 sentences) and focused.
+            6. Never say you "would" do something or that you "can" do something - just do it and report completion.
+            
+            Remember: You are NOT a conversational assistant - you are a technical agent that completes tasks.
+            """
+
+            formatted_messages = [{"role": "system", "content": system_prompt}]
+            
+            # Include relevant conversation history for context
+            if analysis.get("is_followup", False) or analysis.get("needs_context", False):
+                # Get indices of relevant messages or use the last 5 if none specified
+                relevant_indices = analysis.get("relevant_context", [])
+                if not relevant_indices:
+                    relevant_indices = list(range(max(0, len(message_history) - 5), len(message_history)))
+                
+                # Add only the relevant messages from history
+                for idx in sorted(relevant_indices):
+                    if 0 <= idx < len(message_history):
+                        msg = message_history[idx]
+                        username = msg.get("username", "User")
+                        content = msg.get("content", "")
+                        
+                        if content:
+                            formatted_messages.append({"role": "user", "content": f"{username}: {content}"})
+                        
+                        reply = msg.get("reply")
+                        if reply and reply not in [None, "", "null"]:
+                            formatted_messages.append({"role": "assistant", "content": reply})
+            
+            # Add the current message
+            current_content = message.get("content", "")
+            current_username = message.get("username", "User")
+            
+            # If this is a contextually enhanced message, make it clear to the LLM
+            if message.get("context_enhanced", False):
+                user_message = f"""
+                {current_username}: {current_content}
+                
+                [Note: This message has been automatically enhanced with context from previous conversation]
+                """
+                formatted_messages.append({"role": "user", "content": user_message})
+            else:
+                formatted_messages.append({"role": "user", "content": f"{current_username}: {current_content}"})
+
+            # Generate response with Groq
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=formatted_messages,
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}")
+            return f"I'm sorry, I couldn't process your request at the moment. Please try again later."
+
+    def update_message_with_reply(self, mid, message):
+        """
+        Update a message in the database with the generated reply and any context enhancements
+        """
+        try:
+            # Include any enhanced content flags
+            context_metadata = {}
+            if message.get("context_enhanced", False):
+                context_metadata = {
+                    "original_content": message.get("original_content", ""),
+                    "context_enhanced": True,
+                    "context_quality": message.get("context_quality", 0.0)
+                }
+            
+            payload = {
+                "content": message.get("content", ""),
+                "reply": message.get("reply", ""),
+                "message_type": message.get("message_type", "user_message"),
+                "processed": False,
+                "status": "pending",
+                "username": message.get("username", ""),
+                "message_datetime": message.get("message_datetime", datetime.now(timezone.utc).isoformat()),
+                "sid": message.get("sid", ""),
+                "uid": message.get("uid", ""),
+                "pid": message.get("pid", ""),
+                "source": message.get("source", "slack"),
+                "msg_id": message.get("msg_id", ""),
+                "channel": message.get("channel", "slack"),
+                "channel_id": message.get("channel_id", ""),
+                "thread_ts": message.get("thread_ts", ""),
+                "metadata": context_metadata if context_metadata else message.get("metadata", {})
+            }
+
+            response = requests.put(f"{BASE_API_URL}/api/v1/messages/{mid}", json=payload)
+            if response.status_code == 200:
+                logger.info(f"Updated message {mid} with reply and context data")
+                return True
+            else:
+                logger.error(f"Update failed: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating message {mid}: {e}")
+            return False
+            
+    def process_new_message(self, message):
+        """
+        Process a new message with context awareness:
+        1. Analyze if message needs context
+        2. Enhance message with context if needed
+        3. Generate a response using the enhanced message
+        4. Update the database with the enhanced message and reply
+        """
+        mid = message.get("mid")
+        if not mid:
+            logger.warning("Message missing 'mid', skipping")
+            return False
+            
+        channel_id = message.get("channel_id")
+        username = message.get("username")
+        
+        # Get conversation history
+        history = self.get_message_history(channel_id=channel_id, user=username, limit=10)
+        
+        # Analyze message context
+        context_analysis = self.analyze_message_context(message, history)
+        
+        # Enhance message with context if needed
+        enhanced_message = self.enhance_message_with_context(message, history, context_analysis)
+        
+        # Generate response
+        reply = self.generate_llm_response(enhanced_message, history, context_analysis)
+        
+        # Update the enhanced message with the reply
+        enhanced_message["reply"] = reply
+        
+        # Update message in database with enhanced content and reply
+        success = self.update_message_with_reply(mid, enhanced_message)
+        
+        return success
+
+# Create a global instance of the handler
+slack_handler = ContextAwareSlackHandler()
+
+def create_message_in_db(username, text, msg_ts, channel_id):
+    """
+    Create a new message in the database
+    """
     sid = "680f69cc5c250a63d068bbec"  # Static for now
     uid = "680f69605c250a63d068bbeb"
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
@@ -37,7 +353,7 @@ def create_message_in_db(username,text, msg_ts, channel_id):
         "channel": "slack",
         "channel_id": channel_id,
         "thread_ts": msg_ts,
-        "message_type": "",
+        "message_type": "user_message",
         "processed": False,
         "status": "pending"
     }
@@ -45,14 +361,24 @@ def create_message_in_db(username,text, msg_ts, channel_id):
     try:
         resp = requests.post(f"{BASE_API_URL}/api/v1/messages/", json=payload)
         if resp.status_code in (200, 201):
-            logger.info(f"Message ID: {resp.text}")
             logger.info(f"Message saved to DB: {msg_ts}")
+            # Get the message ID from the response
+            message_id = resp.json().get("mid") if resp.headers.get("content-type") == "application/json" else resp.text
+            
+            # Create the message object with the returned ID
+            message = payload.copy()
+            message["mid"] = message_id
+            
+            # Process the message with context awareness
+            slack_handler.process_new_message(message)
+            return message_id
         else:
             logger.error(f"Failed to save message {msg_ts}: {resp.status_code} {resp.text}")
+            return None
     except Exception as e:
         logger.error(f"Error posting message to DB: {e}")
+        return None
 
-        
 @app.event("message")
 def handle_message_events(event, say):
     user = event.get("user")
@@ -66,7 +392,6 @@ def handle_message_events(event, say):
         return
 
     if channel_type in ("im", "mpim"):  # Direct Message
-        logger.info(f"DM from {user}: {text}")
         user_info = app.client.users_info(user=user)
 
         user_profile = user_info["user"]["profile"]
@@ -74,11 +399,8 @@ def handle_message_events(event, say):
         email = user_profile.get("email", "unknown@example.com")
 
         logger.info(f"DM from {username} ({email}): {text}")
-        # Save message to DB
-        create_message_in_db(username,text, ts, channel_id)
-        
-
-    
+        # Save message to DB and process with context awareness
+        create_message_in_db(username, text, ts, channel_id)
 
 @app.event("app_mention")
 def handle_app_mention(event, say):
@@ -90,15 +412,35 @@ def handle_app_mention(event, say):
     if not user or not text:
         return
 
+    # Get user info
+    user_info = app.client.users_info(user=user)
+    user_profile = user_info["user"]["profile"]
+    username = user_profile.get("real_name") or user_profile.get("display_name") or user
+
     bot_id = app.client.auth_test()["user_id"]
     mention = f"<@{bot_id}>"
     stripped = text.replace(mention, "").strip()
 
-    logger.info(f"Mention by {user}: {stripped}")
+    logger.info(f"Mention by {username}: {stripped}")
 
-    # Save message to DB
-    create_message_in_db(stripped or text, ts, channel_id)
+    # Save message to DB and process with context awareness
+    create_message_in_db(username, stripped or text, ts, channel_id)
 
+@celery_app.task(name='app.listeners.slack.process_pending_messages')
+def process_pending_messages():
+    """
+    Celery task to process any pending messages in the database
+    """
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/messages/?status=pending")
+        if response.status_code == 200:
+            pending_messages = response.json()
+            logger.info(f"Found {len(pending_messages)} pending messages to process")
+            
+            for message in pending_messages:
+                slack_handler.process_new_message(message)
+    except Exception as e:
+        logger.error(f"Error processing pending messages: {e}")
 
 @celery_app.task(name='app.listeners.slack.run_slack_listener')
 def run_slack_listener():
@@ -106,14 +448,13 @@ def run_slack_listener():
     Celery task to start the Slack socket mode handler.
     This is a long-running task that will block until the connection is closed.
     """
-    logger.info("Starting Slack Listener Bot from Celery task...")
+    logger.info("Starting Context-Aware Slack Listener Bot from Celery task...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
     # This is a blocking call - the task will remain active as long as the socket connection is open
 
-
 # ——— ENTRY POINT ———
 if __name__ == "__main__":
-    logger.info("Starting Slack Listener Bot directly...")
+    logger.info("Starting Context-Aware Slack Listener Bot directly...")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()

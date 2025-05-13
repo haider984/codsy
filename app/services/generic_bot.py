@@ -27,14 +27,24 @@ class GenericMessageHandler:
     def __init__(self):
         pass
 
+    # def get_message_history(self):
+    #     try:
+    #         response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
+    #         response.raise_for_status()
+    #         return response.json()
+    #     except Exception as e:
+    #         logger.error(f"Error fetching message history: {e}")
+    #         return []
     def get_message_history(self):
         try:
             response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
             response.raise_for_status()
-            return response.json()
+            all_messages = response.json()
+            return all_messages[-10:]  # Return only the last 10 messages
         except Exception as e:
             logger.error(f"Error fetching message history: {e}")
             return []
+
 
     def generate_llm_response(self, message_content, message_history):
         try:
