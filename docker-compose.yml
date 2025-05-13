@@ -119,10 +119,6 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - INTERNAL_BASE_API_URL=http://web:8000
-      - TENANT_ID=${TENANT_ID}
-      - CLIENT_ID=${CLIENT_ID}
-      - CLIENT_SECRET=${CLIENT_SECRET}
-      - USER_EMAIL=${USER_EMAIL}
     depends_on:
       - redis
       - web # Depends on the API service being available
