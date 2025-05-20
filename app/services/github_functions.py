@@ -12,6 +12,7 @@ from langchain.prompts import PromptTemplate
 import hashlib
 import re
 import zipfile
+from slack_sdk import WebClient
 
 # Load .env vars
 load_dotenv()
@@ -826,14 +827,17 @@ def update_existing_code(repo_name, file_path, instruction):
 
         commit_changes(repo_name, file_path,"1st commit", updated_code)
         push_changes(repo_name)
+        url = None # Initialize url
         if file_path.strip().lower().endswith(".html"):
             url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{file_path}"
+        
+        message_content = f"File '{file_path}' generated from prompt and pushed."
+        if url:
+            message_content += f"\n:globe_with_meridians: Live Preview: {url}"
+            
         return {
             "success": True,
-            "message": (
-                f"File '{file_path}' generated from prompt and pushed to "
-                f"\n:globe_with_meridians: Live Preview: {url}"
-            )
+            "message": message_content
         }
     except Exception as e:
         logger.error(f"Error in update_existing_code : {e}")
@@ -881,8 +885,8 @@ def generate_filename_from_code(
         base = h1_match.group(1)
     # 3) Else, try to extract quoted phrase from the prompt
     elif prompt:
-        # look for “…” or "…"
-        m = re.search(r'“([^”]+)”', prompt) or re.search(r'"([^"]+)"', prompt)
+        # look for "…" or "…"
+        m = re.search(r'"([^"]+)"', prompt) or re.search(r'"([^"]+)"', prompt)
         base = m.group(1) if m else prompt
     else:
         base = None
@@ -952,15 +956,20 @@ def generate_and_push_code(repo_name: str,
 
     # 7) Push to GitHub
     push_res = push_changes(repo_name)
+    url = None # Initialize url
     if filename.strip().lower().endswith(".html"):
         url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{filename}"
+    
+    message_content = (
+        f"File '{filename}' generated from prompt and pushed to "
+        f"branch '{branch_name}' in repo '{repo_name}'."
+    )
+    if url:
+        message_content += f"\n:globe_with_meridians: Live Preview: {url}"
+        
     return {
         "success": True,
-        "message": (
-            f"File '{filename}' generated from prompt and pushed to "
-            f"branch '{branch_name}' in repo '{repo_name}'."
-            f"\n:globe_with_meridians: Live Preview: {url}"
-        )
+        "message": message_content
     }
 
 def intelligent_code_modifier(current_code: str, instruction: str) -> str:

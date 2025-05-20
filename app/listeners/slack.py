@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from app.celery_app import celery_app
 from groq import Groq
+import json
 
 # ——— CONFIGURATION ———
 load_dotenv()
@@ -52,6 +53,108 @@ class ContextAwareSlackHandler:
             logger.error(f"Error fetching message history: {e}")
             return []
 
+    def extract_information_with_llm(self, message_history, current_message):
+        """
+        Use LLM to extract git repository, branch names, and other contextual information
+        from message history
+        """
+        try:
+            # Format history for information extraction
+            conversation_history = []
+            for msg in message_history:
+                username = msg.get("username", "User")
+                content = msg.get("content", "")
+                reply = msg.get("reply", "")
+                
+                if content:
+                    conversation_history.append(f"User ({username}): {content}")
+                if reply and reply not in [None, "", "null"]:
+                    conversation_history.append(f"Assistant: {reply}")
+            
+            # Add current message
+            current_content = current_message.get("content", "")
+            current_username = current_message.get("username", "User")
+            conversation_history.append(f"User ({current_username}): {current_content}")
+            
+            system_prompt = """
+            You are an information extraction assistant specialized in technical conversations.
+            Your task is to extract specific information from a conversation history.
+            
+            Extract the following information:
+            1. Git repository names
+            2. Git branch names  
+            3. Project names or IDs
+            4. File paths or directories mentioned
+            5. Programming languages or frameworks mentioned
+            6. Task or action requests
+            
+            Provide a JSON response with the following fields:
+            {
+                "repo_names": [list of repository names],
+                "branch_names": [list of branch names],
+                "project_names": [list of project names],
+                "file_paths": [list of file paths],
+                "languages": [list of programming languages],
+                "current_action": {
+                    "action_type": "create"|"update"|"delete"|"push"|"pull"|"merge"|"other",
+                    "target": "what the action applies to",
+                    "description": "brief description of the requested action"
+                },
+                "is_followup": true/false (is the current message a follow-up to previous conversation?),
+                "requires_context": true/false (does the current message require context to be fully understood?)
+            }
+            
+            Guidelines:
+            - Only include information explicitly mentioned in the conversation
+            - If a repository is referred to in the latest message using "it" or "this repo", include that repo name
+            - For action requests like "push this", determine what "this" refers to from context
+            - Return empty arrays for fields where no information was found
+            - Pay special attention to the MOST RECENT messages for context
+            - only extract one name per field and it should be the most latest one. Do not combine names extract as it is.
+            """
+            
+            user_prompt = f"""
+            Conversation history:
+            {chr(10).join([f"{i+1}. {msg}" for i, msg in enumerate(conversation_history)])}
+            
+            Extract all relevant information from this conversation, with special focus on the last message.
+            """
+            
+            # Generate response with Groq
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,  # Low temperature for more deterministic response
+                response_format={"type": "json_object"},
+                max_tokens=800
+            )
+            
+            # Parse the JSON response
+            extraction_result = json.loads(response.choices[0].message.content)
+            logger.info(f"Information extraction result: {extraction_result}")
+            
+            return extraction_result
+        except Exception as e:
+            logger.error(f"Information extraction failed: {e}")
+            # Default response if extraction fails
+            return {
+                "repo_names": [],
+                "branch_names": [],
+                "project_names": [],
+                "file_paths": [],
+                "languages": [],
+                "current_action": {
+                    "action_type": "unknown",
+                    "target": "",
+                    "description": ""
+                },
+                "is_followup": False,
+                "requires_context": False
+            }
+
     def analyze_message_context(self, current_message, history):
         """
         Analyze the current message to determine:
@@ -65,10 +168,18 @@ class ContextAwareSlackHandler:
                 "needs_context": False,
                 "context_quality": 0.0,
                 "relevant_context": [],
-                "rewrite_suggestion": None
+                "rewrite_suggestion": None,
+                "extracted_info": {}
             }
             
         try:
+            # Extract information from message history using LLM
+            extracted_info = self.extract_information_with_llm(history, current_message)
+            
+            # Determine if this is a follow-up based on the extraction result
+            is_followup = extracted_info.get("is_followup", False)
+            needs_context = extracted_info.get("requires_context", False)
+            
             # Create a prompt for the LLM to analyze context
             current_content = current_message.get("content", "")
             current_username = current_message.get("username", "User")
@@ -85,23 +196,40 @@ class ContextAwareSlackHandler:
                 if reply and reply not in [None, "", "null"]:
                     conversation_history.append(f"Assistant: {reply}")
             
-            system_prompt = """
+            # Format extracted information for the context analysis
+            extracted_info_formatted = "\n".join([
+                f"Repository Names: {', '.join(extracted_info.get('repo_names', []))}",
+                f"Branch Names: {', '.join(extracted_info.get('branch_names', []))}",
+                f"Project Names: {', '.join(extracted_info.get('project_names', []))}",
+                f"File Paths: {', '.join(extracted_info.get('file_paths', []))}",
+                f"Languages/Frameworks: {', '.join(extracted_info.get('languages', []))}"
+            ])
+            
+            # Information about the current action
+            current_action = extracted_info.get('current_action', {})
+            action_formatted = f"Current Action: {current_action.get('action_type', 'unknown')} - {current_action.get('description', '')}"
+            
+            system_prompt = f"""
             You are a context analysis assistant. Your task is to analyze the current message 
             and determine if it requires previous conversation context to be fully understood.
+            
+            Based on the conversation, I've extracted the following information:
+            {extracted_info_formatted}
+            {action_formatted}
             
             Provide a JSON response with the following fields:
             - is_followup: boolean (true if this message is continuing a previous conversation)
             - needs_context: boolean (true if this message needs additional context to be properly understood)
             - context_quality: float (0.0-1.0 score indicating how much this message depends on previous context)
             - relevant_context: array of integers (indices of relevant messages from the history, starting from 0)
-            - rewrite_suggestion: string or null (a suggested rewrite of the query that includes missing context, or null if not needed)
+            - rewrite_suggestion: string (a suggested rewrite of the query that includes missing context to make it self-contained)
             
-            Be very careful about detecting references to:
-            1. Previous questions or requests
-            2. Pronouns without clear referents (it, that, them, etc.)
-            3. Follow-up questions that build on previous answers
-            4. Requests for elaboration or clarification
-            5. References to entities/concepts introduced earlier
+            For the rewrite_suggestion, if the message involves:
+            1. Creating/modifying files: Include what file types, contents, and where they should be saved
+            2. Git operations: Include the repository name, branch, and what should be committed/pushed
+            3. Web/API requests: Include the full URLs, endpoints, and what data should be sent/retrieved
+            
+            The rewrite should be detailed enough that someone without conversation context could understand exactly what to do.
             """
             
             user_prompt = f"""
@@ -111,9 +239,10 @@ class ContextAwareSlackHandler:
             {chr(10).join([f"{i+1}. {msg}" for i, msg in enumerate(conversation_history[-10:])])}
             
             Analyze if the current message needs context from previous messages to be fully understood.
+            If it does, provide a comprehensive rewrite that includes all necessary context.
             """
             
-            # Generate response with Groq - using a smaller/faster model for this analysis task
+            # Generate response with Groq
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -122,12 +251,16 @@ class ContextAwareSlackHandler:
                 ],
                 temperature=0.1,  # Low temperature for more deterministic response
                 response_format={"type": "json_object"},
-                max_tokens=500
+                max_tokens=600
             )
             
             # Parse the JSON response
             import json
             analysis = json.loads(response.choices[0].message.content)
+            
+            # Add extracted information to the analysis
+            analysis["extracted_info"] = extracted_info
+            
             logger.info(f"Context analysis result: {analysis}")
             
             return analysis
@@ -140,7 +273,8 @@ class ContextAwareSlackHandler:
                 "needs_context": False,
                 "context_quality": 0.0,
                 "relevant_context": [],
-                "rewrite_suggestion": None
+                "rewrite_suggestion": None,
+                "extracted_info": {}
             }
 
     def enhance_message_with_context(self, message, history, analysis):
@@ -164,6 +298,7 @@ class ContextAwareSlackHandler:
                 enhanced_message["content"] = enhanced_content
                 enhanced_message["context_enhanced"] = True
                 enhanced_message["context_quality"] = analysis.get("context_quality", 0.0)
+                enhanced_message["extracted_info"] = analysis.get("extracted_info", {})
                 
                 logger.info(f"Enhanced message: '{original_content}' -> '{enhanced_content}'")
                 return enhanced_message
@@ -179,7 +314,28 @@ class ContextAwareSlackHandler:
         Intelligently include relevant context based on analysis
         """
         try:
-            system_prompt = """
+            # Get extracted information
+            extracted_info = analysis.get("extracted_info", {})
+            
+            # Format extracted information for the system prompt
+            if extracted_info:
+                # Format git info
+                repo_info = f"Repository: {', '.join(extracted_info.get('repo_names', []))}" if extracted_info.get('repo_names') else ""
+                branch_info = f"Branch: {', '.join(extracted_info.get('branch_names', []))}" if extracted_info.get('branch_names') else ""
+                project_info = f"Project: {', '.join(extracted_info.get('project_names', []))}" if extracted_info.get('project_names') else ""
+                
+                # Format current action
+                current_action = extracted_info.get('current_action', {})
+                action_info = ""
+                if current_action and current_action.get('action_type') != 'unknown':
+                    action_info = f"Current Action: {current_action.get('action_type')} {current_action.get('target')} - {current_action.get('description')}"
+                
+                # Combine context information
+                context_info = "\n".join(filter(None, [repo_info, branch_info, project_info, action_info]))
+            else:
+                context_info = ""
+            
+            system_prompt = f"""
             You are Agent Lisa, a helpful technical assistant integrated with a Slack workspace.
             
             IMPORTANT INSTRUCTIONS:
@@ -194,6 +350,9 @@ class ContextAwareSlackHandler:
                - A fictitious but realistic access URL
             5. Your responses should be concise (2-3 sentences) and focused.
             6. Never say you "would" do something or that you "can" do something - just do it and report completion.
+            
+            CURRENT CONTEXT INFORMATION:
+            {context_info}
             
             Remember: You are NOT a conversational assistant - you are a technical agent that completes tasks.
             """
@@ -254,7 +413,7 @@ class ContextAwareSlackHandler:
         Update a message in the database with the generated reply and any context enhancements
         """
         try:
-            # Include any enhanced content flags
+            # Include any enhanced content flags and extracted information
             context_metadata = {}
             if message.get("context_enhanced", False):
                 context_metadata = {
@@ -262,6 +421,12 @@ class ContextAwareSlackHandler:
                     "context_enhanced": True,
                     "context_quality": message.get("context_quality", 0.0)
                 }
+            
+            # Add extracted information to metadata
+            if message.get("extracted_info"):
+                if not context_metadata:
+                    context_metadata = {}
+                context_metadata["extracted_info"] = message.get("extracted_info")
             
             payload = {
                 "content": message.get("content", ""),
@@ -309,10 +474,10 @@ class ContextAwareSlackHandler:
         channel_id = message.get("channel_id")
         username = message.get("username")
         
-        # Get conversation history
+        # Get conversation history-
         history = self.get_message_history(channel_id=channel_id, user=username, limit=10)
         
-        # Analyze message context
+        # Analyze message context using LLM
         context_analysis = self.analyze_message_context(message, history)
         
         # Enhance message with context if needed
