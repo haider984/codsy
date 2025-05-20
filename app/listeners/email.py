@@ -17,7 +17,7 @@ load_dotenv()
 TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-USER_EMAIL    = "agent.tom@codsy.ai"
+USER_EMAIL    = os.getenv("USER_EMAIL")
 BASE_API_URL  = os.getenv("BASE_API_URL")
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
