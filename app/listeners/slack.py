@@ -22,7 +22,46 @@ logger = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
 # Initialize Groq client
-client = Groq(api_key=GROQ_API_KEY)
+if GROQ_API_KEY:
+    client = Groq(api_key=GROQ_API_KEY)
+else:
+    client = None
+    logger.warning("GROQ_API_KEY not set. LLM functionalities will be disabled.")
+
+# ─── PERMISSION CHECK HELPER ───────────────────────────────────────────────────
+def check_user_permission(email: str, base_api_url: str) -> bool:
+    """Checks if a user is allowed by querying the agent_users status endpoint."""
+    if not email or email == "Unknown" or "@" not in email: # Basic email validity check
+        logger.warning(f"Permission check: No valid email provided ('{email}'). Denying permission.")
+        return False
+    if not base_api_url: # Check if BASE_API_URL is configured
+        logger.error("Permission check: BASE_API_URL not configured. Denying permission.")
+        return False
+    try:
+        response = requests.get(f"{base_api_url}/api/v1/agent_users/status/email/{email}", timeout=10)
+        if response.status_code == 200:
+            status = response.json()
+            if status == "allowed":
+                logger.info(f"Permission check for {email}: ALLOWED")
+                return True
+            else:
+                logger.info(f"Permission check for {email}: NOT ALLOWED (status: {status})")
+                return False
+        elif response.status_code == 404:
+            logger.warning(f"Permission check for {email}: User not found (404). Denying permission.")
+            return False
+        else:
+            logger.error(f"Permission check for {email}: Error checking status ({response.status_code} {response.text}). Denying permission.")
+            return False
+    except requests.Timeout:
+        logger.error(f"Permission check for {email}: Request timed out. Denying permission.")
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Permission check for {email}: Request failed ({e}). Denying permission.")
+        return False
+    except ValueError as e: # Handles JSON decoding errors
+        logger.error(f"Permission check for {email}: Failed to decode JSON response ({e}). Denying permission.")
+        return False
 
 class ContextAwareSlackHandler:
     def __init__(self):
@@ -58,6 +97,13 @@ class ContextAwareSlackHandler:
         Use LLM to extract git repository, branch names, and other contextual information
         from message history
         """
+        if not client:
+            logger.warning("Groq client not initialized. Skipping LLM information extraction.")
+            return { # Return a default structure
+                "repo_names": [], "branch_names": [], "project_names": [], "file_paths": [],
+                "languages": [], "current_action": {"action_type": "unknown", "target": "", "description": ""},
+                "is_followup": False, "requires_context": False
+            }
         try:
             # Format history for information extraction
             conversation_history = []
@@ -162,6 +208,12 @@ class ContextAwareSlackHandler:
         2. If it needs context enhancement
         3. What specific context should be included
         """
+        if not client:
+            logger.warning("Groq client not initialized. Skipping LLM context analysis.")
+            return { # Return a default structure
+                "is_followup": False, "needs_context": False, "context_quality": 0.0,
+                "relevant_context": [], "rewrite_suggestion": None, "extracted_info": {}
+            }
         if not history:
             return {
                 "is_followup": False,
@@ -313,6 +365,9 @@ class ContextAwareSlackHandler:
         Generate a response using the Groq LLM based on message and history
         Intelligently include relevant context based on analysis
         """
+        if not client:
+            logger.warning("Groq client not initialized. Skipping LLM response generation.")
+            return "I am currently unable to process requests that require advanced understanding. Please try a simpler command or contact support."
         try:
             # Get extracted information
             extracted_info = analysis.get("extracted_info", {})
@@ -497,9 +552,10 @@ class ContextAwareSlackHandler:
 # Create a global instance of the handler
 slack_handler = ContextAwareSlackHandler()
 
-def create_message_in_db(username, text, msg_ts, channel_id):
+def create_message_in_db(username, text, msg_ts, channel_id, user_email_for_context=""):
     """
-    Create a new message in the database
+    Create a new message in the database.
+    The user_email_for_context is not directly saved but used for context if needed by process_new_message.
     """
     sid = "680f69cc5c250a63d068bbec"  # Static for now
     uid = "680f69605c250a63d068bbeb"
@@ -520,7 +576,8 @@ def create_message_in_db(username, text, msg_ts, channel_id):
         "thread_ts": msg_ts,
         "message_type": "user_message",
         "processed": False,
-        "status": "pending"
+        "status": "pending",
+        "user_email_for_context": user_email_for_context
     }
 
     try:
@@ -546,50 +603,82 @@ def create_message_in_db(username, text, msg_ts, channel_id):
 
 @app.event("message")
 def handle_message_events(event, say):
-    user = event.get("user")
+    user_id = event.get("user") # Renamed from 'user' to 'user_id' for clarity
     text = event.get("text", "").strip()
     subtype = event.get("subtype")
     channel_type = event.get("channel_type")
     channel_id = event.get("channel")
     ts = event.get("ts")
 
-    if subtype or not user or not text:
+    if subtype or not user_id or not text:
         return
 
     if channel_type in ("im", "mpim"):  # Direct Message
-        user_info = app.client.users_info(user=user)
+        try:
+            user_info_response = app.client.users_info(user=user_id)
+            user_profile = user_info_response["user"]["profile"]
+            username = user_profile.get("real_name") or user_profile.get("display_name") or user_id
+            email = user_profile.get("email")
 
-        user_profile = user_info["user"]["profile"]
-        username = user_profile.get("real_name") or user_profile.get("display_name") or user
-        email = user_profile.get("email", "unknown@example.com")
+            if not email:
+                logger.warning(f"Could not retrieve email for user {username} ({user_id}). Cannot check permissions.")
+                say("I couldn't verify your permissions because your email is not available. Please check your Slack profile.")
+                return
 
-        logger.info(f"DM from {username} ({email}): {text}")
-        # Save message to DB and process with context awareness
-        create_message_in_db(username, text, ts, channel_id)
+            logger.info(f"DM from {username} ({email}): {text}")
+
+            # === PERMISSION CHECK ===
+            if not check_user_permission(email, BASE_API_URL):
+                logger.warning(f"User {username} ({email}) is not allowed for DM interaction.")
+                say("Sorry, you are not authorized to use this feature.")
+                return
+
+            # Save message to DB and process with context awareness
+            create_message_in_db(username, text, ts, channel_id, user_email_for_context=email)
+        except Exception as e:
+            logger.error(f"Error in handle_message_events for user {user_id}: {e}", exc_info=True)
+            say("Sorry, an error occurred while processing your message.")
 
 @app.event("app_mention")
 def handle_app_mention(event, say):
-    user = event.get("user")
+    user_id = event.get("user") # Renamed from 'user' to 'user_id' for clarity
     text = event.get("text", "")
     channel_id = event.get("channel")
     ts = event.get("ts")
 
-    if not user or not text:
+    if not user_id or not text:
         return
 
-    # Get user info
-    user_info = app.client.users_info(user=user)
-    user_profile = user_info["user"]["profile"]
-    username = user_profile.get("real_name") or user_profile.get("display_name") or user
+    try:
+        # Get user info
+        user_info_response = app.client.users_info(user=user_id)
+        user_profile = user_info_response["user"]["profile"]
+        username = user_profile.get("real_name") or user_profile.get("display_name") or user_id
+        email = user_profile.get("email")
 
-    bot_id = app.client.auth_test()["user_id"]
-    mention = f"<@{bot_id}>"
-    stripped = text.replace(mention, "").strip()
+        if not email:
+            logger.warning(f"Could not retrieve email for user {username} ({user_id}) in app_mention. Cannot check permissions.")
+            say("I couldn't verify your permissions because your email is not available. Please check your Slack profile or contact an admin.")
+            return
 
-    logger.info(f"Mention by {username}: {stripped}")
+        bot_id_response = app.client.auth_test()
+        bot_id = bot_id_response["user_id"]
+        mention = f"<@{bot_id}>"
+        stripped_text = text.replace(mention, "").strip()
 
-    # Save message to DB and process with context awareness
-    create_message_in_db(username, stripped or text, ts, channel_id)
+        logger.info(f"Mention by {username} ({email}): {stripped_text}")
+
+        # === PERMISSION CHECK ===
+        if not check_user_permission(email, BASE_API_URL):
+            logger.warning(f"User {username} ({email}) is not allowed for app_mention interaction.")
+            say("Sorry, you are not authorized to use this feature.")
+            return
+
+        # Save message to DB and process with context awareness
+        create_message_in_db(username, stripped_text or text, ts, channel_id, user_email_for_context=email)
+    except Exception as e:
+        logger.error(f"Error in handle_app_mention for user {user_id}: {e}", exc_info=True)
+        say("Sorry, an error occurred while processing your mention.")
 
 @celery_app.task(name='app.listeners.slack.process_pending_messages')
 def process_pending_messages():

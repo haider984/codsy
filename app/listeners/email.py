@@ -17,7 +17,7 @@ load_dotenv()
 TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-USER_EMAIL    = os.getenv("USER_EMAIL")
+USER_EMAIL    = os.getenv("USER_EMAIL") # This is the app's email, not the sender's for permission check
 BASE_API_URL  = os.getenv("BASE_API_URL")
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
@@ -28,6 +28,42 @@ logger = logging.getLogger(__name__)
 
 _token = None
 _token_expiry = None
+
+# ─── PERMISSION CHECK HELPER ───────────────────────────────────────────────────
+
+def check_user_permission(email: str, base_api_url: str) -> bool:
+    """Checks if a user is allowed by querying the agent_users status endpoint."""
+    if not email or email == "Unknown" or "@" not in email: # Basic email validity check
+        logger.warning(f"Permission check: No valid email provided ('{email}'). Denying permission.")
+        return False
+    try:
+        # Ensure email is URL-encoded if it contains special characters, though requests usually handles this.
+        # Using a timeout for the request is a good practice.
+        response = requests.get(f"{base_api_url}/api/v1/agent_users/status/email/{email}", timeout=10)
+        if response.status_code == 200:
+            status = response.json() # The endpoint directly returns the status string "allowed" or "not_allowed"
+            if status == "allowed":
+                logger.info(f"Permission check for {email}: ALLOWED")
+                return True
+            else:
+                logger.info(f"Permission check for {email}: NOT ALLOWED (status: {status})")
+                return False
+        elif response.status_code == 404:
+            logger.warning(f"Permission check for {email}: User not found (404). Denying permission.")
+            return False
+        else:
+            logger.error(f"Permission check for {email}: Error checking status ({response.status_code} {response.text}). Denying permission.")
+            return False
+    except requests.Timeout:
+        logger.error(f"Permission check for {email}: Request timed out. Denying permission.")
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Permission check for {email}: Request failed ({e}). Denying permission.")
+        return False
+    except ValueError as e: # Handles JSON decoding errors
+        logger.error(f"Permission check for {email}: Failed to decode JSON response ({e}). Denying permission.")
+        return False
+
 
 # ─── ACCESS TOKEN ──────────────────────────────────────────────────────────────
 
@@ -347,12 +383,18 @@ def poll_inbox_task():
     Celery task to check for unread emails, process them, and mark as read.
     Will be scheduled to run periodically by Celery Beat.
     """
-    seen_ids = getattr(poll_inbox_task, 'seen_ids', set())
+    processed_count = 0
+    skipped_unauthorized = 0
+    
+    # Ensure BASE_API_URL is available for the permission check
+    if not BASE_API_URL:
+        logger.error("BASE_API_URL not set. Cannot perform permission checks.")
+        return "Error: BASE_API_URL not configured."
 
     try:
         token = get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
-        url = f"{GRAPH_API}/users/{USER_EMAIL}/mailFolders/inbox/messages?$filter=isRead eq false"
+        url = f"{GRAPH_API}/users/{os.getenv('USER_EMAIL')}/mailFolders/inbox/messages?$filter=isRead eq false" # Use app's user email here
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
         messages = resp.json().get('value', [])
@@ -360,48 +402,61 @@ def poll_inbox_task():
 
         for msg in messages:
             msg_id = msg["id"]
-            if msg_id in seen_ids:
-                continue
-            seen_ids.add(msg_id)
+            
+            # It's better to handle seen_ids logic at a higher level if possible,
+            # or ensure it's robust. For now, proceeding with existing logic.
+            # seen_ids = getattr(poll_inbox_task, 'seen_ids', set())
+            # if msg_id in seen_ids:
+            #     continue
+            # seen_ids.add(msg_id)
+            # poll_inbox_task.seen_ids = seen_ids # Persist if needed
 
-            sender = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
+            sender_email = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
             subject = msg.get("subject", "")
             body_preview = msg.get("bodyPreview", "")
             html_body    = msg.get("body", {}).get("content", "")
-            conversation_id = msg.get("conversationId")
+            # conversation_id = msg.get("conversationId") # Not currently used
 
-            logger.info(f"New Email from {sender}, Subject: {subject}")
+            logger.info(f"Processing Email from {sender_email}, Subject: {subject}")
 
-            mid = create_message_in_db(sender, subject, body_preview, msg_id)
+            # === PERMISSION CHECK ===
+            if not check_user_permission(sender_email, BASE_API_URL):
+                logger.warning(f"User {sender_email} is not allowed. Skipping processing for email '{subject}'.")
+                mark_email_as_read(token, msg_id) # Mark as read to avoid reprocessing
+                skipped_unauthorized += 1
+                continue # Skip to the next message
+
+            # --- Proceed with processing if user is allowed ---
+            mid = create_message_in_db(sender_email, subject, body_preview, msg_id)
             if not mid:
-                logger.error(f"Failed to create message in DB for msg_id: {msg_id}")
+                logger.error(f"Failed to create message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
+                mark_email_as_read(token, msg_id)
                 continue
+            
             classification = classify_email_with_llm(html_body)
             logger.info(f"Email classified as: {classification}")
 
             if classification == "meeting":
                 meeting_url, meeting_id, passcode = extract_meeting_details_bs(html_body)
                 if meeting_url != "Not Found":
-                    start_time = datetime.now(timezone.utc).isoformat()
+                    # Consider if start/end times should be extracted from email or calendar
+                    start_time = datetime.now(timezone.utc).isoformat() 
                     end_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-
-                    create_meeting_in_db(sender, meeting_url, meeting_id, passcode, start_time, end_time, mid)
+                    create_meeting_in_db(sender_email, meeting_url, meeting_id, passcode, start_time, end_time, mid)
                 else:
                     logger.warning(f"Meeting details not found for email: {subject}")
+            
+            # TODO: Update message in DB with classification if your schema supports it
+            # e.g., by calling a an update message endpoint with mid and classification.
 
             mark_email_as_read(token, msg_id)
-
-        # Prune the seen_ids set if it gets too large
-        if len(seen_ids) > 5000:
-            seen_ids = set(list(seen_ids)[-2500:])
-            
-        # Store the updated seen_ids for the next run
-        poll_inbox_task.seen_ids = seen_ids
+            processed_count += 1
         
     except Exception as e:
-        logger.error(f"Error during polling: {e}")
+        logger.error(f"Error during polling: {e}", exc_info=True)
+        return f"Error during polling: {str(e)}"
         
-    return f"Processed {len(messages)} emails"
+    return f"Polling complete. Processed {processed_count} emails. Skipped {skipped_unauthorized} unauthorized emails."
 
 # Original function maintained for backward compatibility or manual runs
 def poll_inbox():
