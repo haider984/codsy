@@ -4,10 +4,11 @@ import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
@@ -20,21 +21,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger("GenericBot")
 
-# Initialize Groq client
-client = Groq(api_key=GROQ_API_KEY)
+# Don't initialize client globally, we'll do it per request
 
 class GenericMessageHandler:
     def __init__(self):
-        pass
+        self.clients = {}  # Cache for Groq clients
 
-    # def get_message_history(self):
-    #     try:
-    #         response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
-    #         response.raise_for_status()
-    #         return response.json()
-    #     except Exception as e:
-    #         logger.error(f"Error fetching message history: {e}")
-    #         return []
+    def get_groq_client(self, username):
+        """Get a Groq client for the username, with fallback to environment variable"""
+        # Extract email from username if it has @ symbol
+        email = username if '@' in username else f"{username}@example.com"
+        
+        # Return cached client if available
+        if email in self.clients:
+            return self.clients[email]
+        
+        # Try to get API key from database
+        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        
+        # Fall back to environment variable if needed
+        if not is_allowed or not api_key:
+            if GROQ_API_KEY:
+                api_key = GROQ_API_KEY
+                logger.warning(f"Using fallback GROQ API key for {email}")
+            else:
+                logger.error(f"No GROQ API key available. Cannot generate response.")
+                return None
+                
+        # Create and cache client
+        try:
+            client = Groq(api_key=api_key)
+            self.clients[email] = client
+            return client
+        except Exception as e:
+            logger.error(f"Error creating Groq client: {e}")
+            return None
+
     def get_message_history(self):
         try:
             response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
@@ -45,14 +67,22 @@ class GenericMessageHandler:
             logger.error(f"Error fetching message history: {e}")
             return []
 
-
     def generate_llm_response(self, message_content, message_history):
         try:
+            # Get username from last message if available
+            username = None
+            if message_history:
+                username = message_history[-1].get("username", "service@codsy.ai")
+            
+            # Get client for this user
+            client = self.get_groq_client(username)
+            if not client:
+                return "I'm sorry, I couldn't process your request due to configuration issues."
+                
             system_prompt = """
             You are a helpful assistant responding to messages from various users on different channels (like Slack or Email).
             When generating replies, be polite and refer to previous messages if needed. Try to use the user's name if available.
             """
-
 
             formatted_messages = [{"role": "system", "content": system_prompt}]
 

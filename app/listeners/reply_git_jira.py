@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
 from app.celery_app import celery_app  # Import the Celery app
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
@@ -19,13 +20,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MidMessageProcessor")
 
-# Initialize Groq client
-client = Groq(api_key=GROQ_API_KEY)
-
+# Initialize Groq client will be done when needed instead of globally
 
 class MidMessageProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
+        self.groq_clients = {}  # Store client instances by email
+
+    def get_groq_client(self, email="service@codsy.ai"):
+        """Get a Groq client for the specified email, with fallback to environment variable"""
+        if email in self.groq_clients:
+            return self.groq_clients[email]
+            
+        # Try to get API key from database
+        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        
+        # Fall back to environment variable if needed
+        if not is_allowed or not api_key:
+            if GROQ_API_KEY:
+                api_key = GROQ_API_KEY
+                logger.warning(f"Using fallback GROQ API key for {email}")
+            else:
+                logger.error(f"No GROQ API key available for {email}")
+                return None
+                
+        # Create and cache client
+        try:
+            client = Groq(api_key=api_key)
+            self.groq_clients[email] = client
+            return client
+        except Exception as e:
+            logger.error(f"Error creating Groq client: {e}")
+            return None
 
     def fetch_messages_to_process(self):
         try:
@@ -154,8 +180,14 @@ class MidMessageProcessor:
         Final response to the user:
         """
 
-
         try:
+            # Get client (for service account or from task owner if available)
+            task_owner = tasks[0].get('owner_email', 'service@codsy.ai') if tasks else 'service@codsy.ai'
+            client = self.get_groq_client(task_owner)
+            
+            if not client:
+                return "I couldn't generate a summary due to API configuration issues."
+                
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],

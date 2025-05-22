@@ -9,6 +9,7 @@ from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from app.celery_app import celery_app  # Import the Celery app
+from app.services.agent_user import get_groq_api_key_sync
 
 # ─── SETUP ─────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ USER_EMAIL    = os.getenv("USER_EMAIL") # This is the app's email, not the sende
 BASE_API_URL  = os.getenv("BASE_API_URL")
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -256,14 +257,29 @@ def merge_meetings(email_meetings, calendar_events):
     return merged_meetings
 
 # ─── Classify emails ──────────────────────────────────────────────────────────────
-def classify_email_with_llm(html_body):
+def classify_email_with_llm(html_body, sender_email):
     """
     Use a ChatGroq LLM to classify the email into:
     'meeting', 'transcript', 'instructions', or 'other'.
+    
+    Now gets the API key from the database based on sender_email.
     """
-    if not os.getenv("GROQ_API_KEY"):
-        logger.error("GROQ_API_KEY environment variable not set. Cannot classify email.")
-        return "classification_error" # Return specific error string
+    # Get the API key for this user
+    is_allowed, api_key = get_groq_api_key_sync(sender_email, BASE_API_URL)
+    
+    # If user is not allowed or no key is available, use fallback or return error
+    if not is_allowed:
+        logger.error(f"User {sender_email} is not allowed to use Groq API")
+        return "classification_error"
+        
+    if not api_key:
+        # Try fallback to environment variable
+        api_key = GROQ_API_KEY
+        if not api_key:
+            logger.error(f"No GROQ API key available for {sender_email} and no fallback configured")
+            return "classification_error"
+        else:
+            logger.warning(f"Using fallback GROQ API key for {sender_email}")
 
     # Simplify HTML for LLM processing - extract text, maybe limit length
     try:
@@ -275,7 +291,8 @@ def classify_email_with_llm(html_body):
         body_text = "Error parsing body."
 
     try:
-        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5) # Using known good model, adjust temp
+        # Use the user-specific API key
+        llm = ChatGroq(model="llama3-70b-8192", api_key=api_key, temperature=0.5)
         classification_prompt = PromptTemplate(
             template = """
                 Analyze the following email body and classify its primary purpose.
@@ -300,7 +317,7 @@ def classify_email_with_llm(html_body):
             return 'other' # Default to 'other' if LLM response is invalid
         return classification
     except Exception as e:
-         logger.error(f"LLM invocation failed during classification: {e}", exc_info=True)
+         logger.error(f"LLM invocation failed during classification for {sender_email}: {e}", exc_info=True)
          return "classification_error" # Return specific error string
 
 
@@ -433,7 +450,8 @@ def poll_inbox_task():
                 mark_email_as_read(token, msg_id)
                 continue
             
-            classification = classify_email_with_llm(html_body)
+            # Pass sender_email to classify_email_with_llm to get the right API key
+            classification = classify_email_with_llm(html_body, sender_email)
             logger.info(f"Email classified as: {classification}")
 
             if classification == "meeting":

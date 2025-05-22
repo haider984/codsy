@@ -8,25 +8,22 @@ from datetime import datetime, timezone, timedelta
 from app.celery_app import celery_app
 from groq import Groq
 import json
+import asyncio
+from app.services.agent_user import get_groq_api_key_sync
 
 # ——— CONFIGURATION ———
 load_dotenv()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 BASE_API_URL = os.getenv("BASE_API_URL")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 
 # ——— LOGGER + SLACK INIT ———
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
-# Initialize Groq client
-if GROQ_API_KEY:
-    client = Groq(api_key=GROQ_API_KEY)
-else:
-    client = None
-    logger.warning("GROQ_API_KEY not set. LLM functionalities will be disabled.")
+# Don't initialize Groq client globally - we'll create per-user instances
 
 # ─── PERMISSION CHECK HELPER ───────────────────────────────────────────────────
 def check_user_permission(email: str, base_api_url: str) -> bool:
@@ -66,6 +63,38 @@ def check_user_permission(email: str, base_api_url: str) -> bool:
 class ContextAwareSlackHandler:
     def __init__(self):
         self.history_window = timedelta(hours=48)  # Look back 48 hours for context
+        self.groq_clients = {}  # Cache of Groq clients by user email
+
+    def get_groq_client(self, email: str):
+        """
+        Get a Groq client for the specified user email.
+        Uses cached client if available, otherwise creates a new one.
+        Falls back to environment variable if user key not available.
+        """
+        # Return cached client if available
+        if email in self.groq_clients:
+            return self.groq_clients[email]
+            
+        # Get API key for this user
+        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        
+        # If user is not allowed or no key available, fall back to environment variable
+        if not is_allowed or not api_key:
+            if GROQ_API_KEY:
+                api_key = GROQ_API_KEY
+                logger.warning(f"Using fallback GROQ API key for {email}")
+            else:
+                logger.error(f"No GROQ API key available for {email} and no fallback configured")
+                return None
+                
+        # Create and cache the client
+        try:
+            client = Groq(api_key=api_key)
+            self.groq_clients[email] = client
+            return client
+        except Exception as e:
+            logger.error(f"Failed to create Groq client for {email}: {e}")
+            return None
 
     def get_message_history(self, channel_id, user=None, limit=10):
         """
@@ -97,13 +126,19 @@ class ContextAwareSlackHandler:
         Use LLM to extract git repository, branch names, and other contextual information
         from message history
         """
+        # Get user email from the current message
+        email = current_message.get("user_email_for_context", current_message.get("username", ""))
+        
+        # Get Groq client for this user
+        client = self.get_groq_client(email)
         if not client:
-            logger.warning("Groq client not initialized. Skipping LLM information extraction.")
-            return { # Return a default structure
+            logger.warning(f"No Groq client available for {email}. Skipping LLM information extraction.")
+            return {
                 "repo_names": [], "branch_names": [], "project_names": [], "file_paths": [],
                 "languages": [], "current_action": {"action_type": "unknown", "target": "", "description": ""},
                 "is_followup": False, "requires_context": False
             }
+            
         try:
             # Format history for information extraction
             conversation_history = []
@@ -166,7 +201,7 @@ class ContextAwareSlackHandler:
             Extract all relevant information from this conversation, with special focus on the last message.
             """
             
-            # Generate response with Groq
+            # Use the user-specific client
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -208,9 +243,14 @@ class ContextAwareSlackHandler:
         2. If it needs context enhancement
         3. What specific context should be included
         """
+        # Get user email from the current message
+        email = current_message.get("user_email_for_context", current_message.get("username", ""))
+        
+        # Get Groq client for this user
+        client = self.get_groq_client(email)
         if not client:
-            logger.warning("Groq client not initialized. Skipping LLM context analysis.")
-            return { # Return a default structure
+            logger.warning(f"No Groq client available for {email}. Skipping LLM context analysis.")
+            return {
                 "is_followup": False, "needs_context": False, "context_quality": 0.0,
                 "relevant_context": [], "rewrite_suggestion": None, "extracted_info": {}
             }
@@ -294,7 +334,9 @@ class ContextAwareSlackHandler:
             If it does, provide a comprehensive rewrite that includes all necessary context.
             """
             
-            # Generate response with Groq
+            # Use the user-specific client for both extraction and analysis
+            extracted_info = self.extract_information_with_llm(history, current_message)
+            
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -307,7 +349,6 @@ class ContextAwareSlackHandler:
             )
             
             # Parse the JSON response
-            import json
             analysis = json.loads(response.choices[0].message.content)
             
             # Add extracted information to the analysis
@@ -365,9 +406,14 @@ class ContextAwareSlackHandler:
         Generate a response using the Groq LLM based on message and history
         Intelligently include relevant context based on analysis
         """
+        # Get user email from the message
+        email = message.get("user_email_for_context", message.get("username", ""))
+        
+        # Get Groq client for this user
+        client = self.get_groq_client(email)
         if not client:
-            logger.warning("Groq client not initialized. Skipping LLM response generation.")
-            return "I am currently unable to process requests that require advanced understanding. Please try a simpler command or contact support."
+            logger.warning(f"No Groq client available for {email}. Skipping LLM response generation.")
+            return "I am currently unable to process your request due to an API configuration issue. Please contact support."
         try:
             # Get extracted information
             extracted_info = analysis.get("extracted_info", {})
@@ -450,7 +496,7 @@ class ContextAwareSlackHandler:
             else:
                 formatted_messages.append({"role": "user", "content": f"{current_username}: {current_content}"})
 
-            # Generate response with Groq
+            # Use the user-specific client
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=formatted_messages,

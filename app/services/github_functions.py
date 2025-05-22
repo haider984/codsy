@@ -13,6 +13,7 @@ import hashlib
 import re
 import zipfile
 from slack_sdk import WebClient
+from app.services.agent_user import get_groq_api_key_sync
 
 # Load .env vars
 load_dotenv()
@@ -24,6 +25,7 @@ GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 github_client = Github(GITHUB_TOKEN)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+BASE_API_URL = os.getenv("BASE_API_URL")
 API_URL = "https://api.github.com"
 HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
@@ -32,6 +34,22 @@ HEADERS = {
 
 PREVIEW_SERVER_URL = os.getenv("PREVIEW_SERVER_URL")
 PREVIEW_SERVER_PORT = os.getenv("PREVIEW_SERVER_PORT")
+
+def get_groq_api_key(email="service@codsy.ai"):
+    """Get the Groq API key for the given email, with fallback to environment variable"""
+    # Try to get API key from database
+    is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+    
+    # Fall back to environment variable if needed
+    if not is_allowed or not api_key:
+        if GROQ_API_KEY:
+            api_key = GROQ_API_KEY
+            logger.warning(f"Using fallback GROQ API key for {email}")
+        else:
+            logger.error(f"No GROQ API key available for {email}")
+            return None
+            
+    return api_key
 
 def sanitize_repo_name(repo_name: str) -> str:
     return repo_name.strip().replace(" ", "-")
@@ -709,22 +727,25 @@ def rename_branch(repo_name: str, old_branch: str, new_branch: str):
     except Exception as e:
         print(f"❌ Failed to rename branch: {e}")
 
-def generate_code(request_prompt):
+def generate_code(request_prompt, email="service@codsy.ai"):
     """
     Generate code from a natural language prompt using the ChatGroq LLM.
     
     Args:
         request_prompt (str): Prompt for code generation (e.g., "Write an HTML contact form").
+        email (str): Email of the user making the request, for API key lookup.
         
     Returns:
         str: Generated code, or an error message.
     """
-    if not os.getenv("GROQ_API_KEY"):
-        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+    # Get API key for this email
+    api_key = get_groq_api_key(email)
+    if not api_key:
+        logging.error("No GROQ API key available. Cannot generate code.")
         return "generate_code_error"
 
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
         prompt_template = PromptTemplate(
             template="""You are an expert programmer. Write clean, concise, and correct code based on the user's instructions.
             Your response must include only the final code with no explanations or formatting tags.
@@ -753,23 +774,26 @@ def generate_code(request_prompt):
         logging.error(f"Error generating code: {e}")
         return f"Error generating code: {e}"
 
-def update_code(existing_code, instruction):
+def update_code(existing_code, instruction, email="service@codsy.ai"):
     """
     Modify the provided code intelligently based on a high-level natural language instruction.
     
     Args:
         existing_code (str): Current code.
         instruction (str): Instruction for modification.
+        email (str): Email of the user making the request, for API key lookup.
         
     Returns:
         str: Updated code after modifications.
     """
-    if not os.getenv("GROQ_API_KEY"):
-        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+    # Get API key for this email
+    api_key = get_groq_api_key(email)
+    if not api_key:
+        logging.error("No GROQ API key available. Cannot update code.")
         return "update_code_error"
 
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
         prompt_template = PromptTemplate(
             template="""You are an expert programmer and code refiner.
         Analyze the provided code and modify it according to the instruction.
@@ -972,9 +996,8 @@ def generate_and_push_code(repo_name: str,
         "message": message_content
     }
 
-def intelligent_code_modifier(current_code: str, instruction: str) -> str:
+def intelligent_code_modifier(current_code: str, instruction: str, email="service@codsy.ai") -> str:
     """
-    
     Uses Groq LLM to intelligently update existing code based on an instruction.
     The model receives full context and should only apply the specified change.
     
@@ -983,16 +1006,19 @@ def intelligent_code_modifier(current_code: str, instruction: str) -> str:
     Args:
         current_code (str): Current code.
         instruction (str): Instruction for modification.
+        email (str): Email of the user making the request, for API key lookup.
         
     Returns:
         str: Updated code after modifications.
     """
-    if not os.getenv("GROQ_API_KEY"):
-        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+    # Get API key for this email
+    api_key = get_groq_api_key(email)
+    if not api_key:
+        logging.error("No GROQ API key available. Cannot modify code.")
         return "identify_function_error"
     
     try:
-        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5) # Using known good model, adjust temp
+        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5, api_key=api_key)
         prompt = PromptTemplate(
             template = """
         "You are an expert programmer and code refiner."
