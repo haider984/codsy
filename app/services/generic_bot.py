@@ -4,7 +4,6 @@ import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
-from app.services.agent_user import get_groq_api_key_sync  # Add this import
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +21,25 @@ logging.basicConfig(
 logger = logging.getLogger("GenericBot")
 
 # Don't initialize client globally, we'll do it per request
+def get_groq_api_key(sender_email):
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/groq/{sender_email}", timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            api_key = data.get("id")
+            if api_key:
+                return api_key
+            else:
+                logger.error(f"No API key found in response for {sender_email}")
+                return None
+        else:
+            logger.error(f"Failed to get API key for {sender_email}, status code: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.exception(f"Exception occurred while fetching Groq API key for {sender_email}: {e}")
+        return None
 
 class GenericMessageHandler:
     def __init__(self):
@@ -37,10 +55,10 @@ class GenericMessageHandler:
             return self.clients[email]
         
         # Try to get API key from database
-        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        api_key = get_groq_api_key(email)
         
         # Fall back to environment variable if needed
-        if not is_allowed or not api_key:
+        if not api_key:
             if GROQ_API_KEY:
                 api_key = GROQ_API_KEY
                 logger.warning(f"Using fallback GROQ API key for {email}")

@@ -16,6 +16,7 @@ from app.services.agent_user import (
     update_agent_user,
     delete_agent_user,
     get_agent_user_status_by_email,
+    get_agent_user_by_email,
     get_db # Re-using the get_db from services
 )
 from pydantic import EmailStr # For email validation in path parameter
@@ -50,6 +51,32 @@ async def add_agent_user(
     created_user = await create_agent_user(agent_user_data, db)
     # model_validate is Pydantic V2
     return AgentUserResponse.model_validate(created_user)
+
+@router.get("/{email}")
+async def get_user_id_by_email(
+    email: EmailStr,
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    Get the user ID (MongoDB document ID) for a given email.
+    """
+    user = await get_agent_user_by_email(email, db)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with email '{email}' not found.")
+    return {"id": user.uid}
+
+@router.get("/groq/{email}")
+async def get_user_id_by_email(
+    email: EmailStr,
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    Get the user ID (MongoDB document ID) for a given email.
+    """
+    user = await get_agent_user_by_email(email, db)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User with email '{email}' not found.")
+    return {"id": user.groq_api}
 
 
 @router.get("/{agent_user_id}", response_model=AgentUserResponse)
@@ -89,7 +116,15 @@ async def read_all_agent_users(
     agent_users = await get_all_agent_users(db)
     return [AgentUserResponse.model_validate(au) for au in agent_users]
 
+async def get_all_agent_users(db: AsyncIOMotorDatabase):
+    cursor = db["agent_users"].find({})
+    users = await cursor.to_list(length=None)
 
+    # Convert MongoDB _id to string id
+    for user in users:
+        user["id"] = str(user["_id"])
+        del user["_id"]
+    return users
 @router.get("/status/email/{email}", response_model=UserStatus)
 async def read_agent_user_status_by_email(
     email: EmailStr, # Use EmailStr for path parameter validation
@@ -99,7 +134,8 @@ async def read_agent_user_status_by_email(
     Check if a user is allowed or not_allowed based on their email.
     Returns the user's status.
     """
-    status = await get_agent_user_status_by_email(email, db)
+    user = await get_agent_user_by_email(email, db)
+    status=user.status if user else None
     if status is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

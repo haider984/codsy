@@ -9,7 +9,7 @@ from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from app.celery_app import celery_app  # Import the Celery app
-from app.services.agent_user import get_groq_api_key_sync
+
 
 # ─── SETUP ─────────────────────────────────────────────────────────────────────
 
@@ -256,6 +256,26 @@ def merge_meetings(email_meetings, calendar_events):
                 break
     return merged_meetings
 
+def get_groq_api_key(sender_email):
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/groq/{sender_email}", timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            api_key = data.get("id")
+            if api_key:
+                return api_key
+            else:
+                logger.error(f"No API key found in response for {sender_email}")
+                return None
+        else:
+            logger.error(f"Failed to get API key for {sender_email}, status code: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.exception(f"Exception occurred while fetching Groq API key for {sender_email}: {e}")
+        return None
+
 # ─── Classify emails ──────────────────────────────────────────────────────────────
 def classify_email_with_llm(html_body, sender_email):
     """
@@ -265,13 +285,7 @@ def classify_email_with_llm(html_body, sender_email):
     Now gets the API key from the database based on sender_email.
     """
     # Get the API key for this user
-    is_allowed, api_key = get_groq_api_key_sync(sender_email, BASE_API_URL)
-    
-    # If user is not allowed or no key is available, use fallback or return error
-    if not is_allowed:
-        logger.error(f"User {sender_email} is not allowed to use Groq API")
-        return "classification_error"
-        
+    api_key = get_groq_api_key(sender_email)
     if not api_key:
         # Try fallback to environment variable
         api_key = GROQ_API_KEY
@@ -328,6 +342,17 @@ def create_message_in_db(sender_email, subject, body_preview, msg_id):
     # Static for now. TODO: Lookup dynamically based on sender_email if needed.
     sid = "680f69cc5c250a63d068bbec"
     uid = "680f69605c250a63d068bbeb"
+    if sender_email:
+        try:
+            response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{sender_email}", timeout=10)
+
+            if response.status_code == 200:
+                uid = response.json()["id"]
+            else:
+                print(f"Warning: Failed to fetch UID for email {sender_email}: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching UID for email {sender_email}: {e}")
+
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
 
     payload = {
@@ -436,12 +461,54 @@ def poll_inbox_task():
 
             logger.info(f"Processing Email from {sender_email}, Subject: {subject}")
 
-            # === PERMISSION CHECK ===
+   
+
+
             if not check_user_permission(sender_email, BASE_API_URL):
                 logger.warning(f"User {sender_email} is not allowed. Skipping processing for email '{subject}'.")
-                mark_email_as_read(token, msg_id) # Mark as read to avoid reprocessing
+                if not token:
+                    logger.error("Failed to retrieve access token.")
+                    continue
+                
+                response_body = """
+                    <p>Hi,</p>
+                    <p>Thank you for your interest.</p>
+                    <p>At this time, access to our beta program is limited to a selected group of participants. Unfortunately, your request could not be processed because it does not match any approved entries in our system.</p>
+                    <p>If you believe this is an error or you’d like to learn more about future opportunities to join, feel free to reach out to our support team.</p>
+                    <p>Best regards,<br>
+                    Codsy.AI Team<br>
+                    contact@codsy.ai</p>
+                    <p><strong>This is a system-generated message. Please do not reply.</strong></p>
+                    """
+
+
+                
+                # Prepare the reply API request
+                url = f"{GRAPH_API}/users/{USER_EMAIL}/messages/{msg_id}/reply"
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "comment": response_body
+                }
+
+                # Send the reply
+                resp = requests.post(url, headers=headers, json=data)
+                if resp.status_code == 202:
+                    logger.info(f"📧 Replied to message {msg_id}")
+                else:
+                    logger.error(f"❌ Failed to reply to {msg_id}: {resp.status_code} | {resp.text}")
+                
+                # Mark as read to avoid reprocessing
+                mark_email_as_read(token, msg_id)
+                
                 skipped_unauthorized += 1
-                continue # Skip to the next message
+                continue  # Skip to the next message
+
+
+
+
 
             # --- Proceed with processing if user is allowed ---
             mid = create_message_in_db(sender_email, subject, body_preview, msg_id)

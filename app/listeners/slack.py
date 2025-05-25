@@ -2,6 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from slack_bolt import App
+from slack_sdk import WebClient
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import requests
 from datetime import datetime, timezone, timedelta
@@ -9,7 +10,7 @@ from app.celery_app import celery_app
 from groq import Groq
 import json
 import asyncio
-from app.services.agent_user import get_groq_api_key_sync
+
 
 # ——— CONFIGURATION ———
 load_dotenv()
@@ -23,6 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = App(token=SLACK_BOT_TOKEN)
 
+client = WebClient(token=SLACK_BOT_TOKEN)
 # Don't initialize Groq client globally - we'll create per-user instances
 
 # ─── PERMISSION CHECK HELPER ───────────────────────────────────────────────────
@@ -43,6 +45,7 @@ def check_user_permission(email: str, base_api_url: str) -> bool:
                 return True
             else:
                 logger.info(f"Permission check for {email}: NOT ALLOWED (status: {status})")
+
                 return False
         elif response.status_code == 404:
             logger.warning(f"Permission check for {email}: User not found (404). Denying permission.")
@@ -59,6 +62,25 @@ def check_user_permission(email: str, base_api_url: str) -> bool:
     except ValueError as e: # Handles JSON decoding errors
         logger.error(f"Permission check for {email}: Failed to decode JSON response ({e}). Denying permission.")
         return False
+def get_groq_api_key(sender_email):
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/groq/{sender_email}", timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            api_key = data.get("id")
+            if api_key:
+                return api_key
+            else:
+                logger.error(f"No API key found in response for {sender_email}")
+                return None
+        else:
+            logger.error(f"Failed to get API key for {sender_email}, status code: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.exception(f"Exception occurred while fetching Groq API key for {sender_email}: {e}")
+        return None
 
 class ContextAwareSlackHandler:
     def __init__(self):
@@ -76,10 +98,10 @@ class ContextAwareSlackHandler:
             return self.groq_clients[email]
             
         # Get API key for this user
-        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        api_key = get_groq_api_key(email)
         
         # If user is not allowed or no key available, fall back to environment variable
-        if not is_allowed or not api_key:
+        if not api_key:
             if GROQ_API_KEY:
                 api_key = GROQ_API_KEY
                 logger.warning(f"Using fallback GROQ API key for {email}")
@@ -605,6 +627,17 @@ def create_message_in_db(username, text, msg_ts, channel_id, user_email_for_cont
     """
     sid = "680f69cc5c250a63d068bbec"  # Static for now
     uid = "680f69605c250a63d068bbeb"
+    if user_email_for_context:
+        try:
+            response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{user_email_for_context}", timeout=10)
+
+            if response.status_code == 200:
+                uid = response.json()["id"]
+            else:
+                print(f"Warning: Failed to fetch UID for email {user_email_for_context}: {response.status_code}")
+        except Exception as e:
+            print(f"Error fetching UID for email {user_email_for_context}: {e}")
+
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
 
     payload = {
@@ -676,6 +709,7 @@ def handle_message_events(event, say):
             # === PERMISSION CHECK ===
             if not check_user_permission(email, BASE_API_URL):
                 logger.warning(f"User {username} ({email}) is not allowed for DM interaction.")
+
                 say("Sorry, you are not authorized to use this feature.")
                 return
 
