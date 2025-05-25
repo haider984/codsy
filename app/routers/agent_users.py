@@ -125,9 +125,10 @@ async def get_all_agent_users(db: AsyncIOMotorDatabase):
         user["id"] = str(user["_id"])
         del user["_id"]
     return users
+
 @router.get("/status/email/{email}", response_model=UserStatus)
 async def read_agent_user_status_by_email(
-    email: EmailStr, # Use EmailStr for path parameter validation
+    email: EmailStr,
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     """
@@ -135,13 +136,15 @@ async def read_agent_user_status_by_email(
     Returns the user's status.
     """
     user = await get_agent_user_by_email(email, db)
-    status=user.status if user else None
-    if status is None:
+    user_status = user.status if user else None
+
+    if user_status is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent user with email '{email}' not found."
         )
-    return status
+    return user_status
+
 
 
 @router.put("/{agent_user_id}", response_model=AgentUserResponse)
