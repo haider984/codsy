@@ -17,10 +17,11 @@ class AgentUserCreate(AgentUserBase):
     pass
 
 class AgentUserUpdate(BaseModel):
-    email: Optional[EmailStr] = Field(None, description="User's email address")
     status: Optional[UserStatus] = Field(None, description="Status: allowed or not_allowed")
-    groq_api: Optional[str] = Field(None, description="GROQ API key")
 
+class AgentUserGroqApiUpdate(BaseModel):
+    groq_api: Optional[str] = Field(None, description="GROQ API key")
+    
 class AgentUserInDB(AgentUserBase):
     id: str = Field(..., description="MongoDB document ID")
 

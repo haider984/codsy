@@ -745,13 +745,17 @@ def generate_code(request_prompt, email="service@codsy.ai"):
         return "generate_code_error"
 
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.9, api_key=api_key)
         prompt_template = PromptTemplate(
-            template="""You are an expert programmer. Write clean, concise, and correct code based on the user's instructions.
-            Your response must include only the final code with no explanations or formatting tags.
-            For HTML files, ensure all CSS and JavaScript is properly embedded within the HTML file itself.
-            Make sure all paths and resources are relative and self-contained.
-            Create complete, standalone files that will work in a Docker container environment.
+            template="""You are a highly skilled AI coding assistant.
+        Your task is to generate new code that adheres strictly to the provided instruction.
+
+        **Constraints:**
+        - Return only the final, complete, and updated code block.
+        - Do NOT include explanations, markdown formatting, or additional commentary.
+        - For HTML files, inline all CSS and JavaScript inside a single HTML file.
+        - All file paths must be relative and self-contained (suitable for Docker).
+        - Ensure the output is syntactically correct and production-ready.
 
             User query: {request_prompt}""",
             input_variables=["request_prompt"],
@@ -793,14 +797,17 @@ def update_code(existing_code, instruction, email="service@codsy.ai"):
         return "update_code_error"
 
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.9, api_key=api_key)
         prompt_template = PromptTemplate(
-            template="""You are an expert programmer and code refiner.
-        Analyze the provided code and modify it according to the instruction.
-        Your response must contain only the final, updated code without any explanations or additional text.
-        For HTML files, ensure all CSS and JavaScript is properly embedded within the HTML file itself.
-        Make sure all paths and resources are relative and self-contained.
-        Create complete, standalone files that will work in a Docker container environment.
+            template="""You are a highly skilled AI coding assistant.
+        Your task is to take the following code and modify it strictly according to the given instruction.
+
+        **Constraints:**
+        - Return only the final, complete, and updated code block.
+        - Do NOT include explanations, markdown formatting, or additional commentary.
+        - For HTML files, inline all CSS and JavaScript inside a single HTML file.
+        - All file paths must be relative and self-contained (suitable for Docker).
+        - Ensure the output is syntactically correct and production-ready.
 
         Current code: {existing_code}
         Instruction: {instruction}""",

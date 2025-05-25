@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 # from bson.son import SON
 
 # Models will now have .email and .status
-from app.models.agent_user import AgentUserCreate, AgentUserUpdate, AgentUserResponse, UserStatus
+from app.models.agent_user import AgentUserCreate, AgentUserUpdate, AgentUserResponse, UserStatus,AgentUserGroqApiUpdate
 from app.services.agent_user import (
     create_agent_user,
     get_agent_user_by_id,
@@ -17,6 +17,7 @@ from app.services.agent_user import (
     delete_agent_user,
     get_agent_user_status_by_email,
     get_agent_user_by_email,
+    update_agent_user_groq_api,
     get_db # Re-using the get_db from services
 )
 from pydantic import EmailStr # For email validation in path parameter
@@ -145,6 +146,19 @@ async def read_agent_user_status_by_email(
         )
     return user_status
 
+@router.put("/{agent_user_id}/groq_api", response_model=AgentUserResponse)
+async def update_agent_user_groq_api_endpoint(
+    agent_user_id: str,
+    groq_api_update_data: AgentUserGroqApiUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    Update only the groq_api fields for an existing agent user by their document ID.
+    """
+    updated_user = await update_agent_user_groq_api(agent_user_id, groq_api_update_data, db)
+    if not updated_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent user not found")
+    return AgentUserResponse.model_validate(updated_user)
 
 
 @router.put("/{agent_user_id}", response_model=AgentUserResponse)
