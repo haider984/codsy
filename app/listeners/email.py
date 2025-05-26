@@ -9,7 +9,7 @@ from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from app.celery_app import celery_app  # Import the Celery app
-
+from ..services.follow_up import analyze_and_enhance_question
 
 # ─── SETUP ─────────────────────────────────────────────────────────────────────
 
@@ -338,21 +338,9 @@ def classify_email_with_llm(html_body, sender_email):
 
 # ─── Create message in Message Table of DB ──────────────────────────────────────────────────────────────
 
-def create_message_in_db(sender_email, subject, body_preview, msg_id):
+def create_message_in_db(sender_email, subject, body_preview, msg_id,uid):
     # Static for now. TODO: Lookup dynamically based on sender_email if needed.
     sid = "680f69cc5c250a63d068bbec"
-    uid = "680f69605c250a63d068bbeb"
-    if sender_email:
-        try:
-            response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{sender_email}", timeout=10)
-
-            if response.status_code == 200:
-                uid = response.json()["id"]
-            else:
-                print(f"Warning: Failed to fetch UID for email {sender_email}: {response.status_code}")
-        except Exception as e:
-            print(f"Error fetching UID for email {sender_email}: {e}")
-
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
 
     payload = {
@@ -415,7 +403,16 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
     except Exception as e:
         logger.error(f"Error posting meeting to DB: {e}")
 
+import re
 
+def strip_quoted_reply(content: str) -> str:
+    """
+    Removes quoted reply text from email threads, keeping only the top-level reply.
+    """
+    # Common pattern for quoted replies (e.g., "On Sun, 25 May 2025 at 14:24, ... wrote:")
+    split_pattern = re.compile(r"On\s.+?wrote:", re.IGNORECASE | re.DOTALL)
+    parts = split_pattern.split(content)
+    return parts[0].strip() if parts else content.strip()
 
 # ─── POLL INBOX TASK ─────────────────────────────────────────────────────────────────
 
@@ -510,8 +507,20 @@ def poll_inbox_task():
 
 
 
-            # --- Proceed with processing if user is allowed ---
-            mid = create_message_in_db(sender_email, subject, body_preview, msg_id)
+            
+            if sender_email:
+                try:
+                    response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{sender_email}", timeout=10)
+
+                    if response.status_code == 200:
+                        uid = response.json()["id"]
+                    else:
+                        print(f"Warning: Failed to fetch UID for email {sender_email}: {response.status_code}")
+                except Exception as e:
+                    print(f"Error fetching UID for email {sender_email}: {e}")
+            
+            enhanced_question = analyze_and_enhance_question(strip_quoted_reply(body_preview), uid)
+            mid = create_message_in_db(sender_email, subject, enhanced_question, msg_id,uid)
             if not mid:
                 logger.error(f"Failed to create message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
                 mark_email_as_read(token, msg_id)

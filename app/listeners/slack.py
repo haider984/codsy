@@ -10,7 +10,7 @@ from app.celery_app import celery_app
 from groq import Groq
 import json
 import asyncio
-
+from ..services.follow_up import analyze_and_enhance_question
 
 # ——— CONFIGURATION ———
 load_dotenv()
@@ -192,24 +192,12 @@ class ContextAwareSlackHandler:
 # Create a global instance of the handler
 slack_handler = ContextAwareSlackHandler()
 
-def create_message_in_db(username, text, msg_ts, channel_id, user_email_for_context=""):
+def create_message_in_db(username, text, msg_ts, channel_id,uid):
     """
     Create a new message in the database.
     The user_email_for_context is not directly saved but used for context if needed by process_new_message.
     """
     sid = "680f69cc5c250a63d068bbec"  # Static for now
-    uid = "680f69605c250a63d068bbeb"
-    if user_email_for_context:
-        try:
-            response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{user_email_for_context}", timeout=10)
-
-            if response.status_code == 200:
-                uid = response.json()["id"]
-            else:
-                print(f"Warning: Failed to fetch UID for email {user_email_for_context}: {response.status_code}")
-        except Exception as e:
-            print(f"Error fetching UID for email {user_email_for_context}: {e}")
-
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
 
     payload = {
@@ -227,8 +215,7 @@ def create_message_in_db(username, text, msg_ts, channel_id, user_email_for_cont
         "thread_ts": msg_ts,
         "message_type": "user_message",
         "processed": False,
-        "status": "pending",
-        "user_email_for_context": user_email_for_context
+        "status": "pending"
     }
 
     try:
@@ -260,7 +247,7 @@ def handle_message_events(event, say):
     channel_type = event.get("channel_type")
     channel_id = event.get("channel")
     ts = event.get("ts")
-
+    uid=""
     if subtype or not user_id or not text:
         return
 
@@ -284,9 +271,21 @@ def handle_message_events(event, say):
 
                 say("Sorry, you are not authorized to use this feature.")
                 return
+            
+            if email:
+                try:
+                    response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{email}", timeout=10)
 
+                    if response.status_code == 200:
+                        uid = response.json()["id"]
+                    else:
+                        print(f"Warning: Failed to fetch UID for email {email}: {response.status_code}")
+                except Exception as e:
+                    print(f"Error fetching UID for email {email}: {e}")
+            
+            enhanced_question = analyze_and_enhance_question(text, uid)
             # Save message to DB and process with context awareness
-            create_message_in_db(username, text, ts, channel_id, user_email_for_context=email)
+            create_message_in_db(username, enhanced_question, ts, channel_id,uid)
         except Exception as e:
             logger.error(f"Error in handle_message_events for user {user_id}: {e}", exc_info=True)
             say("Sorry, an error occurred while processing your message.")
@@ -325,9 +324,20 @@ def handle_app_mention(event, say):
             logger.warning(f"User {username} ({email}) is not allowed for app_mention interaction.")
             say("Sorry, you are not authorized to use this feature.")
             return
+        if email:
+            try:
+                response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{email}", timeout=10)
 
+                if response.status_code == 200:
+                    uid = response.json()["id"]
+                else:
+                    print(f"Warning: Failed to fetch UID for email {email}: {response.status_code}")
+            except Exception as e:
+                print(f"Error fetching UID for email {email}: {e}")
+        
+        enhanced_question = analyze_and_enhance_question(text, uid)
         # Save message to DB and process with context awareness
-        create_message_in_db(username, stripped_text or text, ts, channel_id, user_email_for_context=email)
+        create_message_in_db(username, enhanced_question, ts, channel_id,uid)
     except Exception as e:
         logger.error(f"Error in handle_app_mention for user {user_id}: {e}", exc_info=True)
         say("Sorry, an error occurred while processing your mention.")
