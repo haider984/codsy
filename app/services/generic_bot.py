@@ -75,15 +75,42 @@ class GenericMessageHandler:
             logger.error(f"Error creating Groq client: {e}")
             return None
 
-    def get_message_history(self):
+    # def get_message_history(self):
+    #     try:
+    #         response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
+    #         response.raise_for_status()
+    #         all_messages = response.json()
+    #         return all_messages[-10:]  # Return only the last 10 messages
+    #     except Exception as e:
+    #         logger.error(f"Error fetching message history: {e}")
+    #         return []
+
+    def get_message_history(self, uid):
         try:
-            response = requests.get(f"{BASE_API_URL}/api/v1/messages/")
+            if not uid:
+                logger.error("UID is required to fetch message history.")
+                return []
+
+            response = requests.get(f"{BASE_API_URL}/api/v1/messages/", params={"uid": uid})
             response.raise_for_status()
             all_messages = response.json()
-            return all_messages[-10:]  # Return only the last 10 messages
+
+            message_count = len(all_messages)
+
+            if message_count == 0:
+                logger.info(f"No messages found for uid={uid}")
+                return []
+
+            if message_count <= 10:
+                logger.info(f"Found {message_count} messages for uid={uid} (less than or equal to 10)")
+                return all_messages
+            else:
+                logger.info(f"Found {message_count} messages for uid={uid} — returning last 10")
+                return all_messages[-10:]
         except Exception as e:
-            logger.error(f"Error fetching message history: {e}")
+            logger.error(f"Error fetching message history for uid={uid}: {e}")
             return []
+
 
     def generate_llm_response(self, message_content, message_history):
         try:
@@ -156,13 +183,26 @@ class GenericMessageHandler:
             logger.error(f"Error updating message {mid}: {e}")
             return False
 
+    # def process_message(self, message, message_type="greeting"):
+    #     mid = message.get("mid")
+    #     if not mid:
+    #         logger.warning("Message missing 'mid', skipping")
+    #         return False
+
+    #     logger.info(f"Handling greeting message {mid}")
+    #     history = self.get_message_history()
+    #     reply = self.generate_llm_response(message.get("content", ""), history)
+    #     return self.update_message_with_reply(mid, message, reply)
     def process_message(self, message, message_type="greeting"):
         mid = message.get("mid")
-        if not mid:
-            logger.warning("Message missing 'mid', skipping")
+        uid = message.get("uid")
+
+        if not mid or not uid:
+            logger.warning("Message missing 'mid' or 'uid', skipping")
             return False
 
-        logger.info(f"Handling greeting message {mid}")
-        history = self.get_message_history()
+        logger.info(f"Handling greeting message {mid} for uid {uid}")
+        history = self.get_message_history(uid)
         reply = self.generate_llm_response(message.get("content", ""), history)
         return self.update_message_with_reply(mid, message, reply)
+

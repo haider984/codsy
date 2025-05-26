@@ -31,21 +31,45 @@ async def create_message(
         # Consider more specific error handling based on validation etc.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creating message: {e}")
 
+# @router.get("/", response_model=List[MessageContentReply], response_model_by_alias=False)
+# async def read_all_messages(
+#     collection = Depends(get_message_collection)
+# ):
+#     """Retrieves content and reply for all messages."""
+#     projection = {
+#     "content": 1,
+#     "reply": 1,
+#     "username": 1,
+#     "message_datetime": 1,
+#     "channel": 1,
+#     "_id": 0
+#     }
+
+#     messages_cursor = collection.find({}, projection)
+#     messages_data = await messages_cursor.to_list(length=None)
+#     return [MessageContentReply(**msg) for msg in messages_data]
+
+
 @router.get("/", response_model=List[MessageContentReply], response_model_by_alias=False)
-async def read_all_messages(
+async def read_messages_by_uid(
+    uid: str = Query(None, description="User ID to filter messages"),
     collection = Depends(get_message_collection)
 ):
-    """Retrieves content and reply for all messages."""
+    """Retrieves messages by UID if provided; otherwise returns all messages."""
+    
     projection = {
-    "content": 1,
-    "reply": 1,
-    "username": 1,
-    "message_datetime": 1,
-    "channel": 1,
-    "_id": 0
+        "content": 1,
+        "reply": 1,
+        "username": 1,
+        "message_datetime": 1,
+        "channel": 1,
+        "uid": 1,  # Include UID in the response
+        "_id": 0
     }
 
-    messages_cursor = collection.find({}, projection)
+    query_filter = {"uid": uid} if uid else {}
+
+    messages_cursor = collection.find(query_filter, projection)
     messages_data = await messages_cursor.to_list(length=None)
     return [MessageContentReply(**msg) for msg in messages_data]
 
