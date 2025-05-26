@@ -860,7 +860,7 @@ def update_existing_code(repo_name, file_path, instruction):
         push_changes(repo_name)
         url = None # Initialize url
         if file_path.strip().lower().endswith(".html"):
-            url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{file_path}"
+            url = f"{PREVIEW_SERVER_URL}/{repo_name}/{file_path}"
         
         message_content = f"File '{file_path}' generated from prompt and pushed."
         if url:
@@ -989,7 +989,7 @@ def generate_and_push_code(repo_name: str,
     push_res = push_changes(repo_name)
     url = None # Initialize url
     if filename.strip().lower().endswith(".html"):
-        url = f"{PREVIEW_SERVER_URL}:{PREVIEW_SERVER_PORT}/{repo_name}/{filename}"
+        url = f"{PREVIEW_SERVER_URL}/{repo_name}/{filename}"
     
     message_content = (
         f"File '{filename}' generated from prompt and pushed to "

@@ -276,6 +276,9 @@ class MidMessageProcessor:
                 # Generate the summary reply using LLM
                 print(all_tasks)
                 reply = self.generate_summary_for_message(mid, all_tasks)
+                if reply is None:
+                    reply = "Sorry, I can't help with that right now — but I'm happy to answer another question!"
+                logger.info(f"Generated reply for message {mid}: {reply[:100]}...")
 
                 # Update the message with the final reply
                 success = self.update_message_with_reply(mid, reply)
