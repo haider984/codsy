@@ -13,6 +13,7 @@ from langchain.prompts import PromptTemplate
 from app.services.git_app import process_query
 from app.services.jira_app import process_query_jira
 from app.celery_app import celery_app  # Import the Celery app
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 
 # Configure logging first
 logging.basicConfig(
@@ -26,7 +27,7 @@ logger = logging.getLogger("TaskProcessor")
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 BASE_API_URL = os.getenv("BASE_API_URL")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
@@ -206,12 +207,24 @@ class TaskProcessor:
         """
         Use a ChatGroq LLM to Analyze the response to determine status
         """
-        if not os.getenv("GROQ_API_KEY"):
-            logger.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
-            return "analyze_error"
+        # Get email from the task if available, default to environment variable
+        # In this context we don't have a specific user email, so we'll use a default service account
+        service_email = os.getenv("SERVICE_EMAIL", "service@codsy.ai")
+        
+        # Get API key for this service account
+        is_allowed, api_key = get_groq_api_key_sync(service_email, BASE_API_URL)
+        
+        # If no API key from DB or not allowed, fall back to environment variable
+        if not is_allowed or not api_key:
+            if not GROQ_API_KEY:
+                logger.error("No GROQ API key available. Cannot analyze response.")
+                return "pending"  # Default to pending if no key available
+            api_key = GROQ_API_KEY
+            logger.warning(f"Using fallback GROQ API key for analyzing response.")
 
         try:
-            llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+            # Use the obtained API key
+            llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
             analysis_prompt = PromptTemplate(
                 template="""
                     Analyze the following {task_type} API response and determine if the operation was successful or resulted in an error.

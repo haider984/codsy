@@ -8,7 +8,8 @@ from .core.config import settings # Import settings
 # Import ALL your router modules
 from .routers import (
     projects, sessions, gittasks,
-    jiratasks, meetings, users, messages, status
+    jiratasks, meetings, users, messages, status,
+    agent_users
 )
 
 @asynccontextmanager
@@ -38,6 +39,7 @@ app.include_router(meetings.router, prefix="/api/v1/meetings", tags=["Meetings"]
 app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
 app.include_router(status.router, prefix="/api/v1/status", tags=["Status"])
+app.include_router(agent_users.router, prefix="/api/v1/agent_users", tags=["Agent Users"])
 
 @app.get("/")
 async def root():

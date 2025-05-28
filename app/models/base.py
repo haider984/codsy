@@ -70,4 +70,16 @@ class PyObjectId(ObjectId):
 common_config = ConfigDict(
     populate_by_name=True,
     arbitrary_types_allowed=True,
+    json_encoders={ObjectId: str} # Add this for Pydantic v2, or if PyObjectId serialization isn't fully handling it
 )
+
+class BaseDocument(BaseModel):
+    id: Optional[PyObjectId] = Field(default=None, alias="_id") # Use default=None for optional _id before creation
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    model_config = common_config
+
+    # Optional: Add a pre-save hook to update `updated_at` if you're not using a database-level timestamp
+    # This would require a custom save method or integration with an ODM like Beanie/MongoEngine
+    # For Pydantic models used with Motor, this logic is usually handled in service layers before update operations.

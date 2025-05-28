@@ -40,7 +40,20 @@ Required JSON format:
 ]
 IMPORTANT: ALWAYS make sure to include github repository name both in title and description for git platform
 IMPORTANT: ALWAYS make sure to include project key and project name in capital letters for jira platform
-
+Example Input:
+now create a 1 mobile shop website page frontend in html and CSS for selling mobile in sellingmobile.html and push it to us repository
+Example Output (JSON):
+[
+  {{
+    "title": "Create mobile shop website page in github repository named us",
+    "description": "Create a mobile shop website page frontend in HTML and CSS for selling mobiles in github repository named us. The file should be named 'sellingmobile.html'",
+    "platform": "git"
+  }}
+  {{
+    "title": "Push mobile shop page to GitHub repository named us",
+    "description": "Commit and push the completed mobile shop page to the GitHub repository named us.",
+    "platform": "git"
+  }}
 Example Input:
 I've got a new project I want you to start — it's called DevTrack8. It's a single-page HTML dashboard meant to mock up a simple developer task tracker. Here's what I need:
 - First of all give me list of all jira projects and github repositories
@@ -160,6 +173,27 @@ def update_message_status(mid, original_msg):
     except Exception as e:
         logger.error(f"Failed to update message status: {e}")
 
+def update_message_with_reply(mid, reply):
+        try:
+            url = f"{BASE_API_URL}/api/v1/messages/{mid}"
+            get_response = requests.get(url)
+            get_response.raise_for_status()
+            message_data = get_response.json()
+
+            # # Check if the status is already "successful" and preserve it
+            # if message_data.get("status") != "successful":
+            
+            
+            message_data["reply"] = reply
+            message_data["completion_date"] = datetime.now(timezone.utc).isoformat()
+
+            update_response = requests.put(url, json=message_data)
+            update_response.raise_for_status()
+            logger.info(f"Message {mid} updated with reply")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating message {mid}: {e}")
+            return False
 def process_message_for_tasks(mid):
     msg = fetch_message(mid)
     if not msg:
@@ -167,7 +201,8 @@ def process_message_for_tasks(mid):
 
     tasks = analyze_tasks_with_llm(msg["content"])
     if not tasks:
-        logger.warning("No tasks identified")
+        update_message_with_reply(mid, "Sorry, I can't help with that right now — but I'm happy to answer another question!")
+        logger.info(f"No tasks found in message {mid}")
         return
 
     for task in tasks:
