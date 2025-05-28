@@ -6,6 +6,7 @@ import json
 import sys
 import re
 import logging
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 from .jira_functions import (
     connect_jira, list_projects, get_project, create_issue, get_issue,
     update_issue, add_comment, delete_issue, assign_issue,
@@ -31,7 +32,8 @@ JSON_PATH = "project_metadata.json"
 
 # Load environment
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
+BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Jira credentials
 JIRA_SERVER = os.getenv("JIRA_SERVER")
@@ -77,15 +79,33 @@ function_descriptions = {
     "create_project_rest": "Creates a new project. Requires key, name"
 }
 
-def extract_parameters(func_name, query):
+# Function to get Groq API key
+def get_groq_api_key(email="service@codsy.ai"):
+    """Get the Groq API key for the given email, with fallback to environment variable"""
+    # Try to get API key from database
+    is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+    
+    # Fall back to environment variable if needed
+    if not is_allowed or not api_key:
+        if GROQ_API_KEY:
+            api_key = GROQ_API_KEY
+            print(f"Using fallback GROQ API key for {email}")
+        else:
+            print(f"No GROQ API key available for {email}")
+            return None
+            
+    return api_key
+
+def extract_parameters(func_name, query, email="service@codsy.ai"):
     """
     Use ChatGroq with Llama 3.3 Versatile to extract parameters from the user query
     based on the function name.
     """
-
-    if not os.getenv("GROQ_API_KEY"):
-            logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
-            return "parameter_extraction_error"
+    # Get API key for this email
+    api_key = get_groq_api_key(email)
+    if not api_key:
+        logging.error("No GROQ API key available. Cannot extract parameters.")
+        return "parameter_extraction_error"
     
     # Special case for create_project_rest to ensure we get a valid key and name
     if func_name == "create_project_rest" and "project" in query.lower():
@@ -143,7 +163,7 @@ def extract_parameters(func_name, query):
     # Create a prompt for Groq to extract parameters
     param_list = ", ".join(required_params)
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
         extraction_prompt = PromptTemplate(
             template="""
                 Extract the following parameters from the user query: {param_list}
@@ -194,20 +214,21 @@ def extract_parameters(func_name, query):
         print(f"Error extracting parameters: {e}")
         return {}
 
-def identify_function(query):
+def identify_function(query, email="service@codsy.ai"):
     """
     Use ChatGroq with Llama 3.3 Versatile to identify the most appropriate function
     based on the user query.
     """
-
-    if not os.getenv("GROQ_API_KEY"):
-        logging.error("GROQ_API_KEY environment variable not set. Please configure it in the .env file.")
+    # Get API key for this email
+    api_key = get_groq_api_key(email)
+    if not api_key:
+        logging.error("No GROQ API key available. Cannot identify function.")
         return "function_identification_error"
     
     function_list = "\n".join([f"- {name}: {desc}" for name, desc in function_descriptions.items()])
 
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile",temperature=0.5)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.5, api_key=api_key)
         analysis_prompt = PromptTemplate(
             template="""
                 Based on the following functions available for Jira interaction, identify the SINGLE most appropriate function to call based on the user query.
@@ -272,14 +293,14 @@ def generate_unique_project_key(base_key, json_path):
 
     return new_key
 
-def process_query_jira(query):
+def process_query_jira(query, email="service@codsy.ai"):
     print(f"Processing query: {query}")
-    function_name = identify_function(query)
+    function_name = identify_function(query, email)
     if not function_name:
         return "Sorry, I couldn't identify which Jira function to use for your query."
 
     print(f"Identified function: {function_name}")
-    params = extract_parameters(function_name, query)
+    params = extract_parameters(function_name, query, email)
 
     # Auto-generate unique project key if missing
     if function_name == "create_project_rest":

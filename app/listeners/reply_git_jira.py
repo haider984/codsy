@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from groq import Groq
 from app.celery_app import celery_app  # Import the Celery app
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 BASE_API_URL = os.getenv("BASE_API_URL")
 
 # Configure logging
@@ -19,13 +20,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MidMessageProcessor")
 
-# Initialize Groq client
-client = Groq(api_key=GROQ_API_KEY)
-
+# Initialize Groq client will be done when needed instead of globally
 
 class MidMessageProcessor:
     def __init__(self):
         self.check_interval = 10  # seconds
+        self.groq_clients = {}  # Store client instances by email
+
+    def get_groq_client(self, email="service@codsy.ai"):
+        """Get a Groq client for the specified email, with fallback to environment variable"""
+        if email in self.groq_clients:
+            return self.groq_clients[email]
+            
+        # Try to get API key from database
+        is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+        
+        # Fall back to environment variable if needed
+        if not is_allowed or not api_key:
+            if GROQ_API_KEY:
+                api_key = GROQ_API_KEY
+                logger.warning(f"Using fallback GROQ API key for {email}")
+            else:
+                logger.error(f"No GROQ API key available for {email}")
+                return None
+                
+        # Create and cache client
+        try:
+            client = Groq(api_key=api_key)
+            self.groq_clients[email] = client
+            return client
+        except Exception as e:
+            logger.error(f"Error creating Groq client: {e}")
+            return None
 
     def fetch_messages_to_process(self):
         try:
@@ -65,7 +91,7 @@ class MidMessageProcessor:
             logger.error(f"Error fetching jira tasks for message ID {mid}: {e}")
             return []
 
-    def wait_for_all_task_replies(self, mid, max_wait=300, check_interval=5):
+    def wait_for_all_task_replies(self, mid, max_wait=150, check_interval=5):
         """Wait until all related tasks for a message ID have non-empty replies."""
         waited = 0
         while waited < max_wait:
@@ -135,19 +161,34 @@ class MidMessageProcessor:
             title = task.get('title', 'Untitled Task')
             reply = task.get('reply', 'No response available')
             task_details.append(f"Title: {title}\nReply: {reply}")
-
+        logger.info(f"Generated task details for message {mid}: {task_details} tasks")
         combined_details = "\n\n".join(task_details)
 
         prompt = f"""
-        You are an assistant generating a final user-facing response. Use ONLY the tasks listed below and their replies to create a well-structured summary.
+        You are an assistant generating a final user-facing response based on the completion status of multiple tasks. Follow these instructions carefully:
 
         Instructions:
         - DO NOT include or repeat the task titles.
-        - Summarize the results naturally as if informing the user of completed work.
-        - Include all relevant links and names exactly as provided.
-        - Use a clear, friendly, and professional tone.
-        - Do not add any information not found in the input.
-        - start msg from i have complete your task you assign me 
+        - For each task:
+        - If it was successful (e.g., contains "success": true), summarize it clearly and professionally. Include any names, links, or details exactly as provided.
+        - If it failed (e.g., "success": false, or contains an error message), DO NOT include any technical or raw error details. Simply say:
+            "Sorry, I wasn’t able to complete this task at the moment. It seems some details might be missing or unclear. Please review the request and provide any additional information if needed, and I’ll be happy to try again or assist with anything else!"
+        - If **all tasks failed**, return only:
+        reply = "Sorry, I wasn’t able to complete this task at the moment. It seems some details might be missing or unclear. Please review the request and provide any additional information if needed, and I’ll be happy to try again or assist with anything else!"
+        - If **at least one task succeeded**, begin the message with:
+        "I have completed the task you assigned me."
+        - Use a friendly, clear, and professional tone throughout.
+        Example input:
+        Task: Create GitHub branch
+        Response: {{
+        "success": false,
+        "message": "'NoneType' object has no attribute 'strip'"
+        }}
+
+        Expected reply:
+        I tried to create the GitHub branch, but something went wrong. Please verify the repository details or try again later.
+
+        Now write a polite summary based on the following task results:
         Tasks and responses for message ID {mid}:
         {combined_details}
 
@@ -155,7 +196,15 @@ class MidMessageProcessor:
         """
 
 
+
         try:
+            # Get client (for service account or from task owner if available)
+            task_owner = tasks[0].get('owner_email', 'service@codsy.ai') if tasks else 'service@codsy.ai'
+            client = self.get_groq_client(task_owner)
+            
+            if not client:
+                return "I couldn't generate a summary due to API configuration issues."
+                
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
@@ -244,7 +293,9 @@ class MidMessageProcessor:
                 # Generate the summary reply using LLM
                 print(all_tasks)
                 reply = self.generate_summary_for_message(mid, all_tasks)
-
+                if reply is None:
+                    reply = "Sorry, I can't help with that right now — but I'm happy to answer another question!"
+                logger.info(f"Generated reply for message {mid}: {reply[:100]}...")
                 # Update the message with the final reply
                 success = self.update_message_with_reply(mid, reply)
                 if success:
