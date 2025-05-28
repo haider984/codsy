@@ -9,6 +9,7 @@ from langchain.prompts import PromptTemplate
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from app.celery_app import celery_app  # Import the Celery app
+from ..services.follow_up import analyze_and_enhance_question
 
 # ─── SETUP ─────────────────────────────────────────────────────────────────────
 
@@ -17,17 +18,53 @@ load_dotenv()
 TENANT_ID     = os.getenv("TENANT_ID")
 CLIENT_ID     = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-USER_EMAIL    = "agent.tom@codsy.ai"
+USER_EMAIL    = os.getenv("USER_EMAIL") # This is the app's email, not the sender's for permission check
 BASE_API_URL  = os.getenv("BASE_API_URL")
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 AUTH_URL  = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 _token = None
 _token_expiry = None
+
+# ─── PERMISSION CHECK HELPER ───────────────────────────────────────────────────
+
+def check_user_permission(email: str, base_api_url: str) -> bool:
+    """Checks if a user is allowed by querying the agent_users status endpoint."""
+    if not email or email == "Unknown" or "@" not in email: # Basic email validity check
+        logger.warning(f"Permission check: No valid email provided ('{email}'). Denying permission.")
+        return False
+    try:
+        # Ensure email is URL-encoded if it contains special characters, though requests usually handles this.
+        # Using a timeout for the request is a good practice.
+        response = requests.get(f"{base_api_url}/api/v1/agent_users/status/email/{email}", timeout=10)
+        if response.status_code == 200:
+            status = response.json() # The endpoint directly returns the status string "allowed" or "not_allowed"
+            if status == "allowed":
+                logger.info(f"Permission check for {email}: ALLOWED")
+                return True
+            else:
+                logger.info(f"Permission check for {email}: NOT ALLOWED (status: {status})")
+                return False
+        elif response.status_code == 404:
+            logger.warning(f"Permission check for {email}: User not found (404). Denying permission.")
+            return False
+        else:
+            logger.error(f"Permission check for {email}: Error checking status ({response.status_code} {response.text}). Denying permission.")
+            return False
+    except requests.Timeout:
+        logger.error(f"Permission check for {email}: Request timed out. Denying permission.")
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Permission check for {email}: Request failed ({e}). Denying permission.")
+        return False
+    except ValueError as e: # Handles JSON decoding errors
+        logger.error(f"Permission check for {email}: Failed to decode JSON response ({e}). Denying permission.")
+        return False
+
 
 # ─── ACCESS TOKEN ──────────────────────────────────────────────────────────────
 
@@ -219,15 +256,44 @@ def merge_meetings(email_meetings, calendar_events):
                 break
     return merged_meetings
 
+def get_groq_api_key(sender_email):
+    try:
+        response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/groq/{sender_email}", timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            api_key = data.get("id")
+            if api_key:
+                return api_key
+            else:
+                logger.error(f"No API key found in response for {sender_email}")
+                return None
+        else:
+            logger.error(f"Failed to get API key for {sender_email}, status code: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.exception(f"Exception occurred while fetching Groq API key for {sender_email}: {e}")
+        return None
+
 # ─── Classify emails ──────────────────────────────────────────────────────────────
-def classify_email_with_llm(html_body):
+def classify_email_with_llm(html_body, sender_email):
     """
     Use a ChatGroq LLM to classify the email into:
     'meeting', 'transcript', 'instructions', or 'other'.
+    
+    Now gets the API key from the database based on sender_email.
     """
-    if not os.getenv("GROQ_API_KEY"):
-        logger.error("GROQ_API_KEY environment variable not set. Cannot classify email.")
-        return "classification_error" # Return specific error string
+    # Get the API key for this user
+    api_key = get_groq_api_key(sender_email)
+    if not api_key:
+        # Try fallback to environment variable
+        api_key = GROQ_API_KEY
+        if not api_key:
+            logger.error(f"No GROQ API key available for {sender_email} and no fallback configured")
+            return "classification_error"
+        else:
+            logger.warning(f"Using fallback GROQ API key for {sender_email}")
 
     # Simplify HTML for LLM processing - extract text, maybe limit length
     try:
@@ -239,7 +305,8 @@ def classify_email_with_llm(html_body):
         body_text = "Error parsing body."
 
     try:
-        llm = ChatGroq(model="llama3-70b-8192", temperature=0.5) # Using known good model, adjust temp
+        # Use the user-specific API key
+        llm = ChatGroq(model="llama3-70b-8192", api_key=api_key, temperature=0.5)
         classification_prompt = PromptTemplate(
             template = """
                 Analyze the following email body and classify its primary purpose.
@@ -264,17 +331,16 @@ def classify_email_with_llm(html_body):
             return 'other' # Default to 'other' if LLM response is invalid
         return classification
     except Exception as e:
-         logger.error(f"LLM invocation failed during classification: {e}", exc_info=True)
+         logger.error(f"LLM invocation failed during classification for {sender_email}: {e}", exc_info=True)
          return "classification_error" # Return specific error string
 
 
 
 # ─── Create message in Message Table of DB ──────────────────────────────────────────────────────────────
 
-def create_message_in_db(sender_email, subject, body_preview, msg_id):
+def create_message_in_db(sender_email, subject, body_preview, msg_id,uid):
     # Static for now. TODO: Lookup dynamically based on sender_email if needed.
     sid = "680f69cc5c250a63d068bbec"
-    uid = "680f69605c250a63d068bbeb"
     pid = "60c72b2f9b1e8a3f4c8a1b2c"
 
     payload = {
@@ -337,7 +403,16 @@ def create_meeting_in_db(email, meeting_url, meeting_id, passcode, start_time, e
     except Exception as e:
         logger.error(f"Error posting meeting to DB: {e}")
 
+import re
 
+def strip_quoted_reply(content: str) -> str:
+    """
+    Removes quoted reply text from email threads, keeping only the top-level reply.
+    """
+    # Common pattern for quoted replies (e.g., "On Sun, 25 May 2025 at 14:24, ... wrote:")
+    split_pattern = re.compile(r"On\s.+?wrote:", re.IGNORECASE | re.DOTALL)
+    parts = split_pattern.split(content)
+    return parts[0].strip() if parts else content.strip()
 
 # ─── POLL INBOX TASK ─────────────────────────────────────────────────────────────────
 
@@ -347,12 +422,18 @@ def poll_inbox_task():
     Celery task to check for unread emails, process them, and mark as read.
     Will be scheduled to run periodically by Celery Beat.
     """
-    seen_ids = getattr(poll_inbox_task, 'seen_ids', set())
+    processed_count = 0
+    skipped_unauthorized = 0
+    
+    # Ensure BASE_API_URL is available for the permission check
+    if not BASE_API_URL:
+        logger.error("BASE_API_URL not set. Cannot perform permission checks.")
+        return "Error: BASE_API_URL not configured."
 
     try:
         token = get_access_token()
         headers = {"Authorization": f"Bearer {token}"}
-        url = f"{GRAPH_API}/users/{USER_EMAIL}/mailFolders/inbox/messages?$filter=isRead eq false"
+        url = f"{GRAPH_API}/users/{os.getenv('USER_EMAIL')}/mailFolders/inbox/messages?$filter=isRead eq false" # Use app's user email here
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
         messages = resp.json().get('value', [])
@@ -360,48 +441,116 @@ def poll_inbox_task():
 
         for msg in messages:
             msg_id = msg["id"]
-            if msg_id in seen_ids:
-                continue
-            seen_ids.add(msg_id)
+            
+            # It's better to handle seen_ids logic at a higher level if possible,
+            # or ensure it's robust. For now, proceeding with existing logic.
+            # seen_ids = getattr(poll_inbox_task, 'seen_ids', set())
+            # if msg_id in seen_ids:
+            #     continue
+            # seen_ids.add(msg_id)
+            # poll_inbox_task.seen_ids = seen_ids # Persist if needed
 
-            sender = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
+            sender_email = msg.get("from", {}).get("emailAddress", {}).get("address", "Unknown")
             subject = msg.get("subject", "")
             body_preview = msg.get("bodyPreview", "")
             html_body    = msg.get("body", {}).get("content", "")
-            conversation_id = msg.get("conversationId")
+            # conversation_id = msg.get("conversationId") # Not currently used
 
-            logger.info(f"New Email from {sender}, Subject: {subject}")
+            logger.info(f"Processing Email from {sender_email}, Subject: {subject}")
 
-            mid = create_message_in_db(sender, subject, body_preview, msg_id)
+   
+
+
+            if not check_user_permission(sender_email, BASE_API_URL):
+                logger.warning(f"User {sender_email} is not allowed. Skipping processing for email '{subject}'.")
+                if not token:
+                    logger.error("Failed to retrieve access token.")
+                    continue
+                
+                response_body = """
+                    <p>Hi,</p>
+                    <p>Thank you for your interest.</p>
+                    <p>At this time, access to our beta program is limited to a selected group of participants. Unfortunately, your request could not be processed because it does not match any approved entries in our system.</p>
+                    <p>If you believe this is an error or you’d like to learn more about future opportunities to join, feel free to reach out to our support team.</p>
+                    <p>Best regards,<br>
+                    Codsy.AI Team<br>
+                    contact@codsy.ai</p>
+                    <p><strong>This is a system-generated message. Please do not reply.</strong></p>
+                    """
+
+
+                
+                # Prepare the reply API request
+                url = f"{GRAPH_API}/users/{USER_EMAIL}/messages/{msg_id}/reply"
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "comment": response_body
+                }
+
+                # Send the reply
+                resp = requests.post(url, headers=headers, json=data)
+                if resp.status_code == 202:
+                    logger.info(f"📧 Replied to message {msg_id}")
+                else:
+                    logger.error(f"❌ Failed to reply to {msg_id}: {resp.status_code} | {resp.text}")
+                
+                # Mark as read to avoid reprocessing
+                mark_email_as_read(token, msg_id)
+                
+                skipped_unauthorized += 1
+                continue  # Skip to the next message
+
+
+
+
+
+            
+            if sender_email:
+                try:
+                    response = requests.get(f"{BASE_API_URL}/api/v1/agent_users/{sender_email}", timeout=10)
+
+                    if response.status_code == 200:
+                        uid = response.json()["id"]
+                    else:
+                        print(f"Warning: Failed to fetch UID for email {sender_email}: {response.status_code}")
+                except Exception as e:
+                    print(f"Error fetching UID for email {sender_email}: {e}")
+            
+            enhanced_question = analyze_and_enhance_question(strip_quoted_reply(body_preview), uid)
+            mid = create_message_in_db(sender_email, subject, enhanced_question, msg_id,uid)
             if not mid:
-                logger.error(f"Failed to create message in DB for msg_id: {msg_id}")
+                logger.error(f"Failed to create message in DB for msg_id: {msg_id}. Skipping further processing for this email.")
+                mark_email_as_read(token, msg_id)
                 continue
-            classification = classify_email_with_llm(html_body)
+            
+            # Pass sender_email to classify_email_with_llm to get the right API key
+            classification = classify_email_with_llm(html_body, sender_email)
             logger.info(f"Email classified as: {classification}")
 
             if classification == "meeting":
                 meeting_url, meeting_id, passcode = extract_meeting_details_bs(html_body)
                 if meeting_url != "Not Found":
-                    start_time = datetime.now(timezone.utc).isoformat()
+                    # Consider if start/end times should be extracted from email or calendar
+                    start_time = datetime.now(timezone.utc).isoformat() 
                     end_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-
-                    create_meeting_in_db(sender, meeting_url, meeting_id, passcode, start_time, end_time, mid)
+                    create_meeting_in_db(sender_email, meeting_url, meeting_id, passcode, start_time, end_time, mid)
                 else:
                     logger.warning(f"Meeting details not found for email: {subject}")
+            
+            # TODO: Update message in DB with classification if your schema supports it
+            # e.g., by calling a an update message endpoint with mid and classification.
 
             mark_email_as_read(token, msg_id)
-
-        # Prune the seen_ids set if it gets too large
-        if len(seen_ids) > 5000:
-            seen_ids = set(list(seen_ids)[-2500:])
-            
-        # Store the updated seen_ids for the next run
-        poll_inbox_task.seen_ids = seen_ids
+            processed_count += 1
         
     except Exception as e:
-        logger.error(f"Error during polling: {e}")
+        logger.error(f"Error during polling: {e}", exc_info=True)
+        return f"Error during polling: {str(e)}"
         
-    return f"Processed {len(messages)} emails"
+    return f"Polling complete. Processed {processed_count} emails. Skipped {skipped_unauthorized} unauthorized emails."
 
 # Original function maintained for backward compatibility or manual runs
 def poll_inbox():
