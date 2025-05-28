@@ -5,6 +5,7 @@ import json
 import sys
 import re
 import logging
+from app.services.agent_user import get_groq_api_key_sync  # Add this import
 from .github_functions import (
     sanitize_repo_name,
     create_github_repo,
@@ -44,8 +45,40 @@ from .github_functions import (
 
 # Load environment variables
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-client = Groq(api_key=GROQ_API_KEY)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Keep as fallback
+BASE_API_URL = os.getenv("BASE_API_URL")
+
+# Don't initialize client globally
+
+# Dictionary to cache Groq clients by email
+groq_clients = {}
+
+def get_groq_client(email="service@codsy.ai"):
+    """Get a Groq client for the given email, with fallback to environment variable"""
+    # Return cached client if available
+    if email in groq_clients:
+        return groq_clients[email]
+        
+    # Try to get API key from database
+    is_allowed, api_key = get_groq_api_key_sync(email, BASE_API_URL)
+    
+    # Fall back to environment variable if needed
+    if not is_allowed or not api_key:
+        if GROQ_API_KEY:
+            api_key = GROQ_API_KEY
+            print(f"Using fallback GROQ API key for {email}")
+        else:
+            print(f"No GROQ API key available for {email}")
+            return None
+            
+    # Create and cache client
+    try:
+        client = Groq(api_key=api_key)
+        groq_clients[email] = client
+        return client
+    except Exception as e:
+        print(f"Error creating Groq client: {e}")
+        return None
 
 # Function descriptions for GitHub functions available in github_actions.py
 function_descriptions = {
@@ -121,11 +154,16 @@ param_requirements = {
 
 }
 
-def identify_function(query):
+def identify_function(query, email="service@codsy.ai"):
     """
     Use Groq with Llama 3.3 Versatile to identify the most appropriate GitHub function
     based on the user query.
     """
+    client = get_groq_client(email)
+    if not client:
+        print("No Groq client available. Cannot identify function.")
+        return None
+        
     function_list = "\n".join([f"- {name}: {desc}" for name, desc in function_descriptions.items()])
 
     prompt = f"""
@@ -167,11 +205,16 @@ def identify_function(query):
         print(f"Error identifying function: {e}")
         return None
 
-def extract_parameters(func_name, query):
+def extract_parameters(func_name, query, email="service@codsy.ai"):
     """
     Use Groq with Llama 3.3 Versatile to extract parameters from the user query
     based on the function name.
     """
+    client = get_groq_client(email)
+    if not client:
+        print("No Groq client available. Cannot extract parameters.")
+        return {}
+        
     # Get the required parameters for the function
     required_params = param_requirements.get(func_name, [])
     
@@ -229,7 +272,7 @@ def extract_parameters(func_name, query):
         print(f"Error extracting parameters: {e}")
         return {}
 
-def process_query(query):
+def process_query(query, email="service@codsy.ai"):
     """
     Process a natural language query by:
     1. Identifying the appropriate GitHub function
@@ -239,14 +282,14 @@ def process_query(query):
     print(f"Processing query: {query}")
 
     # Step 1: Identify the appropriate function
-    function_name = identify_function(query)
+    function_name = identify_function(query, email)
     if not function_name:
         return "Sorry, I couldn't identify which GitHub function to use for your query."
 
     print(f"Identified function: {function_name}")
 
     # Step 2: Extract parameters for the function
-    params = extract_parameters(function_name, query)
+    params = extract_parameters(function_name, query, email)
     print(f"Extracted parameters: {params}")
 
     # Step 3: Execute the function

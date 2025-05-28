@@ -65,9 +65,11 @@ classification_prompt = PromptTemplate(
         Combined Tasks:
             "Setup GitHub repo for XYZ and create matching Jira board"
             "After merging PR, update the Jira ticket status"
-    "greeting" — Any content that doesn't clearly fit into the above categories:
+    "greeting" — IMPOTANT! Any content that doesn't clearly fit into the above categories:
         Simple greetings without technical instructions ("Hi", "Hello", "Good morning")
         General questions about wellbeing ("How are you?", "What's going on?")
+        Eaxmple:
+        - give me complete A B C and send me back also greetings
         Casual conversations without specific tasks or meeting details
         Brief acknowledgments or thank you messages
         Any content that lacks the specific characteristics of the other three categories
@@ -154,12 +156,22 @@ def update_message_type(mid, message_type, original_message):
     except Exception as e:
         logger.error(f"Exception while updating message {mid}: {e}")
         return False
+import re
 
+def strip_quoted_reply(content: str) -> str:
+    """
+    Removes quoted reply text from email threads, keeping only the top-level reply.
+    """
+    # Common pattern for quoted replies (e.g., "On Sun, 25 May 2025 at 14:24, ... wrote:")
+    split_pattern = re.compile(r"On\s.+?wrote:", re.IGNORECASE | re.DOTALL)
+    parts = split_pattern.split(content)
+    return parts[0].strip() if parts else content.strip()
 
 def classify_message_content(content):
     """Use OpenAI LLM to classify message content"""
     try:
-        prompt = classification_prompt.format(body=content)
+        cleaned_content = strip_quoted_reply(content)
+        prompt = classification_prompt.format(body=cleaned_content)
         
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",

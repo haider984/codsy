@@ -5,7 +5,7 @@ from .base import PyObjectId, common_config
 
 class MessageBase(BaseModel):
     sid: PyObjectId # Foreign key to Session
-    uid: PyObjectId # Foreign key to User
+    uid: str # Foreign key to User
     pid: PyObjectId # Foreign key to Project
     username:str
     content: str
@@ -47,9 +47,6 @@ class MessageMidResponse(BaseModel):
 class MessageContentReply(BaseModel):
     content: str
     reply: Optional[str] = None
-    username: Optional[str] = None
-    message_datetime: Optional[datetime] = None
-    channel: Optional[str] = None
 
     class Config:
         orm_mode = True
