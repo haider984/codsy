@@ -65,9 +65,11 @@ classification_prompt = PromptTemplate(
         Combined Tasks:
             "Setup GitHub repo for XYZ and create matching Jira board"
             "After merging PR, update the Jira ticket status"
-    "greeting" — Any content that doesn't clearly fit into the above categories:
+    "greeting" — IMPOTANT! Any content that doesn't clearly fit into the above categories:
         Simple greetings without technical instructions ("Hi", "Hello", "Good morning")
         General questions about wellbeing ("How are you?", "What's going on?")
+        Eaxmple:
+        - give me complete A B C and send me back also greetings
         Casual conversations without specific tasks or meeting details
         Brief acknowledgments or thank you messages
         Any content that lacks the specific characteristics of the other three categories

@@ -47,9 +47,6 @@ class MessageMidResponse(BaseModel):
 class MessageContentReply(BaseModel):
     content: str
     reply: Optional[str] = None
-    username: Optional[str] = None
-    message_datetime: Optional[datetime] = None
-    channel: Optional[str] = None
 
     class Config:
         orm_mode = True

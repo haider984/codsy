@@ -60,11 +60,8 @@ async def read_messages_by_uid(
     projection = {
         "content": 1,
         "reply": 1,
-        "username": 1,
-        "message_datetime": 1,
-        "channel": 1,
         "uid": 1,  # Include UID in the response
-        "_id": 0
+
     }
 
     query_filter = {"uid": uid} if uid else {}
